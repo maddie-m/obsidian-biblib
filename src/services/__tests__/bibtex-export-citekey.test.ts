@@ -1,22 +1,37 @@
 /**
- * Reproduction tests for GitHub issue #29:
+ * Tests for GitHub issue #29:
  * "BibTeX export does not preserve citation key"
  *
  * When exporting literature notes as BibTeX, the citation keys from the
  * frontmatter `id` field should be preserved in the BibTeX output.
- * Currently, citation-js regenerates keys (e.g. "Smith2023Test" instead
- * of the user's "smith2023") because `config.format.useIdAsLabel` defaults
- * to false and the CSL-JSON data lacks a `citation-key` field.
  *
- * @see https://github.com/callumacrae/biblib/issues/29  (adjust URL as needed)
+ * The fix copies `id` to `citation-key` before passing data to citation-js,
+ * since citation-js uses `citation-key` for BibTeX output labels.
+ *
+ * @see https://github.com/callumacrae/biblib/issues/29
  */
 import Cite from 'citation-js';
 import '@citation-js/plugin-bibtex';
 
+// Configure citation-js to preserve citation keys with special characters
+// (mirrors the configuration in bibliography-builder.ts)
+const bibtexConfig = Cite.plugins.config.get('@bibtex');
+bibtexConfig.format.checkLabel = false;
+
+/**
+ * Helper function that mimics the preprocessing done in BibliographyBuilder.exportBibTeX()
+ * This copies the `id` field to `citation-key` to preserve citation keys in BibTeX output.
+ */
+function preprocessForBibTeX(data: Record<string, any>): Record<string, any> {
+    const processedData = { ...data };
+    if (processedData.id) {
+        processedData['citation-key'] = processedData.id;
+    }
+    return processedData;
+}
+
 describe('BibTeX export citation key preservation (issue #29)', () => {
-    it.skip('reproduces issue #29: exported BibTeX should use the original citation key from the id field', () => {
-        // This simulates the data flow in BibliographyBuilder.exportBibTeX():
-        // Literature note frontmatter is collected and passed directly to citation-js.
+    it('exported BibTeX should use the original citation key from the id field', () => {
         const frontmatterData = {
             id: 'mycustomkey2023',
             type: 'article-journal',
@@ -25,16 +40,15 @@ describe('BibTeX export citation key preservation (issue #29)', () => {
             issued: { 'date-parts': [[2023, 6, 15]] },
         };
 
-        // This mirrors the exact call in bibliography-builder.ts line 388:
-        //   new Cite(dataArray).get({ style: 'bibtex', type: 'string' })
-        const bibtex = new Cite([frontmatterData]).get({ style: 'bibtex', type: 'string' });
+        const processed = preprocessForBibTeX(frontmatterData);
+        const bibtex = new Cite([processed]).get({ style: 'bibtex', type: 'string' });
 
         // The BibTeX entry should use "mycustomkey2023" as the citation key,
         // not a regenerated key like "Smith2023Study"
         expect(bibtex).toContain('@article{mycustomkey2023,');
     });
 
-    it.skip('reproduces issue #29: multiple entries should each preserve their original keys', () => {
+    it('multiple entries should each preserve their original keys', () => {
         const entries = [
             {
                 id: 'jones-attention-2024',
@@ -52,13 +66,14 @@ describe('BibTeX export citation key preservation (issue #29)', () => {
             },
         ];
 
-        const bibtex = new Cite(entries).get({ style: 'bibtex', type: 'string' });
+        const processed = entries.map(preprocessForBibTeX);
+        const bibtex = new Cite(processed).get({ style: 'bibtex', type: 'string' });
 
         expect(bibtex).toContain('jones-attention-2024');
         expect(bibtex).toContain('brown_deep_2022');
     });
 
-    it.skip('reproduces issue #29: keys with special but Pandoc-valid characters should be preserved', () => {
+    it('keys with special but Pandoc-valid characters should be preserved', () => {
         // Pandoc citekeys can contain alphanumerics and: _ : . # $ % & - + ? < > ~ /
         const frontmatterData = {
             id: 'smith:2023-ml',
@@ -68,7 +83,8 @@ describe('BibTeX export citation key preservation (issue #29)', () => {
             issued: { 'date-parts': [[2023]] },
         };
 
-        const bibtex = new Cite([frontmatterData]).get({ style: 'bibtex', type: 'string' });
+        const processed = preprocessForBibTeX(frontmatterData);
+        const bibtex = new Cite([processed]).get({ style: 'bibtex', type: 'string' });
 
         // The key with colons and hyphens should be preserved
         expect(bibtex).toContain('smith:2023-ml');

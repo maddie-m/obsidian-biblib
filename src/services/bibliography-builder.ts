@@ -4,6 +4,11 @@ import Cite from 'citation-js';
 import '@citation-js/plugin-bibtex';
 import { AttachmentManagerService } from './attachment-manager-service';
 
+// Configure citation-js to preserve citation keys with special characters
+// (e.g., hyphens, colons) instead of regenerating them
+const bibtexConfig = Cite.plugins.config.get('@bibtex');
+bibtexConfig.format.checkLabel = false;
+
 /**
  * Interface representing a literature note with its file and parsed frontmatter.
  */
@@ -381,7 +386,13 @@ export class BibliographyBuilder {
                         }
                     }
                 }
-                
+
+                // Preserve the citation key by copying `id` to `citation-key`
+                // citation-js uses `citation-key` for BibTeX output labels
+                if (processedData.id) {
+                    processedData['citation-key'] = processedData.id;
+                }
+
                 return processedData;
             });
             
