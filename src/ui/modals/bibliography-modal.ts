@@ -104,17 +104,21 @@ export class BibliographyModal extends BaseBibliographyModal {
         if (this.isInitialized) {
             // If this is Zotero data, also collapse the auto-fill section
             if (data.type === AttachmentType.IMPORT) {
-                const citoidContainer = this.contentEl.querySelector('.bibliography-citoid-container');
-                if (citoidContainer) {
-                    citoidContainer.addClass('collapsed');
-                    
+                const autofillContainer = this.contentEl.querySelector('.bibliography-autofill-container');
+                if (autofillContainer) {
+                    autofillContainer.removeClass('is-open');
+                    const content = autofillContainer.querySelector('.bibliography-autofill-content') as HTMLElement;
+                    if (content) {
+                        content.style.display = 'none';
+                    }
+
                     // Add a notice next to the toggle if not already there
-                    const toggle = citoidContainer.querySelector('.bibliography-citoid-toggle');
-                    if (toggle && !toggle.querySelector('.bibliography-zotero-notice')) {
+                    const header = autofillContainer.querySelector('.bibliography-autofill-header');
+                    if (header && !header.querySelector('.bibliography-zotero-notice')) {
                         const noticeEl = document.createElement('span');
                         noticeEl.className = 'bibliography-zotero-notice';
-                        noticeEl.textContent = 'Zotero data loaded - auto-fill section collapsed';
-                        toggle.appendChild(noticeEl);
+                        noticeEl.textContent = ' (Zotero data loaded)';
+                        header.appendChild(noticeEl);
                     }
                 }
             }
@@ -125,25 +129,42 @@ export class BibliographyModal extends BaseBibliographyModal {
     }
 
     private createCitoidLookupSection(contentEl: HTMLElement) {
-        // Use native <details> for collapsible section
-        const details = contentEl.createEl('details', { cls: 'bibliography-autofill-details' });
+        // Use custom collapsible for better cross-platform compatibility (Android WebView issue #25)
+        const container = contentEl.createDiv({ cls: 'bibliography-autofill-container' });
 
         // Determine if should be open by default
         const shouldBeOpen = this.openedViaCommand &&
             !(this.attachmentData.length > 0 && this.attachmentData[0].type === AttachmentType.IMPORT);
-        if (shouldBeOpen) {
-            details.setAttribute('open', '');
-        }
 
-        // Summary (clickable header)
-        const summary = details.createEl('summary');
-        summary.createSpan({ text: 'Auto-fill from identifier or BibTeX' });
+        // Header (clickable toggle)
+        const header = container.createDiv({ cls: 'bibliography-autofill-header' });
+        const arrow = header.createSpan({ cls: 'bibliography-autofill-arrow' });
+        header.createSpan({ text: 'Auto-fill from identifier or BibTeX' });
         if (this.attachmentData.length > 0 && this.attachmentData[0].type === AttachmentType.IMPORT) {
-            summary.createSpan({ cls: 'bibliography-zotero-notice', text: ' (Zotero data loaded)' });
+            header.createSpan({ cls: 'bibliography-zotero-notice', text: ' (Zotero data loaded)' });
         }
 
         // Content
-        const citoidContent = details.createDiv({ cls: 'bibliography-autofill-content' });
+        const citoidContent = container.createDiv({ cls: 'bibliography-autofill-content' });
+
+        // Set initial state
+        if (shouldBeOpen) {
+            container.addClass('is-open');
+        } else {
+            citoidContent.style.display = 'none';
+        }
+
+        // Toggle handler
+        header.addEventListener('click', () => {
+            const isOpen = container.hasClass('is-open');
+            if (isOpen) {
+                container.removeClass('is-open');
+                citoidContent.style.display = 'none';
+            } else {
+                container.addClass('is-open');
+                citoidContent.style.display = 'block';
+            }
+        });
 
         // Identifier lookup
         new Setting(citoidContent)
