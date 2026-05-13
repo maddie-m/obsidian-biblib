@@ -1,10 +1,11 @@
 import { CitationService } from './citation-service';
+import { errorMessage, getString, isRecord } from '../utils/type-guards';
 
 /**
  * Interface for a parsed reference representing a standardized entry from various source formats
  */
 export interface ParsedReference {
-  cslData: Record<string, any>; // CSL-like object
+  cslData: Record<string, unknown>; // CSL-like object
   _sourceFields?: { // Raw fields captured before full CSL conversion
     file?: string | string[];
     annote?: string | string[];
@@ -110,7 +111,7 @@ export class ReferenceParserService {
             sourceFormat: 'bibtex' as const,
             originalId,
             parsingErrors: []
-          } as ParsedReference;
+          };
         } catch (error) {
           // Log the error but return a partial result to avoid failing the entire batch
           console.error('Error parsing BibTeX entry:', error, entry);
@@ -122,12 +123,12 @@ export class ReferenceParserService {
             },
             sourceFormat: 'bibtex' as const,
             parsingErrors: [`Failed to parse entry: ${error instanceof Error ? error.message : String(error)}`]
-          } as ParsedReference;
+          };
         }
       }).filter(entry => entry !== null);
     } catch (error) {
       console.error('Error parsing BibTeX file:', error);
-      throw new Error(`Failed to parse BibTeX file: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`Failed to parse BibTeX file: ${errorMessage(error)}`);
     }
   }
 
@@ -139,35 +140,36 @@ export class ReferenceParserService {
   async parseCslJson(jsonContent: string): Promise<ParsedReference[]> {
     try {
       // Parse the JSON string
-      const data = JSON.parse(jsonContent);
+      const data: unknown = JSON.parse(jsonContent);
       
       // Handle both array and single object formats
-      const entries = Array.isArray(data) ? data : [data];
+      const entries: unknown[] = Array.isArray(data) ? data as unknown[] : [data];
       
       // Validate and convert each entry
       return entries.map(entry => {
         try {
           // Basic structure validation
-          if (!entry || typeof entry !== 'object') {
+          if (!isRecord(entry)) {
             throw new Error('Invalid CSL-JSON entry format');
           }
           
           // Ensure minimal required fields
           const cslData = {
             ...entry,
-            type: entry.type || 'document',
-            title: entry.title || 'Untitled Entry',
-            id: entry.id || 'unknown'
+            type: getString(entry, 'type') || 'document',
+            title: getString(entry, 'title') || 'Untitled Entry',
+            id: getString(entry, 'id') || 'unknown'
           };
           
           // Extract file field(s) if present
           const _sourceFields: ParsedReference['_sourceFields'] = {};
           
-          if (entry.file) {
-            if (Array.isArray(entry.file)) {
-              _sourceFields.file = entry.file.filter((f: any) => typeof f === 'string');
-            } else if (typeof entry.file === 'string') {
-              _sourceFields.file = entry.file;
+          const file = entry.file;
+          if (file) {
+            if (Array.isArray(file)) {
+              _sourceFields.file = (file as unknown[]).filter((f): f is string => typeof f === 'string');
+            } else if (typeof file === 'string') {
+              _sourceFields.file = file;
             }
           }
           
@@ -175,7 +177,7 @@ export class ReferenceParserService {
           if (entry.annote || entry.note) {
             const annote = entry.annote || entry.note;
             if (Array.isArray(annote)) {
-              _sourceFields.annote = annote.filter((a: any) => typeof a === 'string');
+              _sourceFields.annote = (annote as unknown[]).filter((a): a is string => typeof a === 'string');
             } else if (typeof annote === 'string') {
               _sourceFields.annote = annote;
             }
@@ -185,25 +187,25 @@ export class ReferenceParserService {
             cslData,
             _sourceFields: Object.keys(_sourceFields).length > 0 ? _sourceFields : undefined,
             sourceFormat: 'csl-json' as const,
-            originalId: entry.id,
+            originalId: getString(entry, 'id'),
             parsingErrors: []
-          } as ParsedReference;
+          };
         } catch (error) {
           console.error('Error processing CSL-JSON entry:', error, entry);
           return {
             cslData: { 
               type: 'document', 
               title: 'Error parsing entry', 
-              id: entry.id || 'error'
+              id: isRecord(entry) ? getString(entry, 'id') || 'error' : 'error'
             },
             sourceFormat: 'csl-json' as const,
-            parsingErrors: [`Failed to parse entry: ${error instanceof Error ? error.message : String(error)}`]
-          } as ParsedReference;
+            parsingErrors: [`Failed to parse entry: ${errorMessage(error)}`]
+          };
         }
       }).filter(entry => entry !== null);
     } catch (error) {
       console.error('Error parsing CSL-JSON file:', error);
-      throw new Error(`Failed to parse CSL-JSON file: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`Failed to parse CSL-JSON file: ${errorMessage(error)}`);
     }
   }
 

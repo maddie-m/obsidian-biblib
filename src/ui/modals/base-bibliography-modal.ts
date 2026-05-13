@@ -1,6 +1,6 @@
 import { App, Modal, Notice, Setting } from 'obsidian';
 import { BibliographyPluginSettings } from '../../types/settings';
-import { Contributor, AdditionalField, AttachmentData, AttachmentType, Citation } from '../../types/citation';
+import { Contributor, AdditionalField, AttachmentData, AttachmentType } from '../../types/citation';
 import { ContributorField } from '../components/contributor-field';
 import { AdditionalFieldComponent } from '../components/additional-field';
 import { FileSuggestModal } from '../components/file-suggest-modal';
@@ -56,7 +56,7 @@ export abstract class BaseBibliographyModal extends Modal {
      * Handle adding an import attachment (file picker)
      */
     protected addImportAttachment(): void {
-        const fileInput = document.createElement('input');
+        const fileInput = activeDocument.createElement('input');
         fileInput.type = 'file';
         fileInput.accept = '*.*';
 

@@ -9,9 +9,9 @@ describe('CitationService Integration', () => {
 
     beforeEach(() => {
         service = new CitationService({
-            template: '{{author|lower}}{{year}}',
+            citekeyTemplate: '{{author|lower}}{{year}}',
             useZoteroKeys: false,
-            minLength: 4
+            minCitekeyLength: 4
         });
     });
 
@@ -40,8 +40,8 @@ describe('CitationService Integration', () => {
             expect(csl.type).toBe('article-journal');
             expect(csl.title).toBe('Machine Learning in Healthcare');
             expect(csl.author).toHaveLength(2);
-            expect(csl.author[0]).toEqual({ family: 'Smith', given: 'John' });
-            expect(csl.author[1]).toEqual({ family: 'Doe', given: 'Jane' });
+            expect(csl.author![0]).toEqual({ family: 'Smith', given: 'John' });
+            expect(csl.author![1]).toEqual({ family: 'Doe', given: 'Jane' });
             expect(csl['container-title']).toBe('Journal of AI Research');
             expect(csl.volume).toBe('42');
             expect(csl.issue).toBe('3');
@@ -50,7 +50,7 @@ describe('CitationService Integration', () => {
             expect(csl.abstract).toBe('This paper explores ML applications in healthcare.');
             expect(csl.language).toBe('en');
             expect(csl.issued).toBeDefined();
-            expect(csl.issued['date-parts']).toBeDefined();
+            expect(csl.issued!['date-parts']).toBeDefined();
         });
 
         it('should generate a citekey from the template', () => {
@@ -118,9 +118,9 @@ describe('CitationService Integration', () => {
             expect(csl.type).toBe('chapter');
             expect(csl.title).toBe('Chapter on Machine Learning');
             expect(csl.author).toHaveLength(1);
-            expect(csl.author[0].family).toBe('Johnson');
+            expect(csl.author![0].family).toBe('Johnson');
             expect(csl['container-author']).toHaveLength(1);
-            expect(csl['container-author'][0].family).toBe('Wilson');
+            expect(csl['container-author']![0].family).toBe('Wilson');
             expect(csl['container-title']).toBe('Handbook of AI');
             expect(csl.page).toBe('50-75');
         });
@@ -207,7 +207,7 @@ describe('CitationService Integration', () => {
             expect(csl.number).toBe('US10123456B2');
             expect(csl.authority).toBe('United States Patent Office');
             expect(csl.author).toHaveLength(1);
-            expect(csl.author[0].family).toBe('Watson');
+            expect(csl.author![0].family).toBe('Watson');
         });
     });
 
@@ -223,7 +223,7 @@ describe('CitationService Integration', () => {
             const csl = service.parseZoteroItem(zoteroItem);
 
             expect(csl.author).toHaveLength(1);
-            expect(csl.author[0].literal).toBe('World Health Organization');
+            expect(csl.author![0].literal).toBe('World Health Organization');
         });
 
         it('should handle tags and convert to keywords', () => {
@@ -287,7 +287,7 @@ describe('CitationService Integration', () => {
                 };
 
                 const csl = service.parseZoteroItem(zoteroItem);
-                expect(csl.issued['date-parts']).toEqual(expected);
+                expect(csl.issued!['date-parts']).toEqual(expected);
             }
         });
     });

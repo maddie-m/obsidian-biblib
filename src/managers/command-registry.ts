@@ -7,6 +7,7 @@ import { BibliographyPluginSettings } from '../types/settings';
 import { BibliographyBuilder } from '../services/bibliography-builder';
 import { ServiceManager } from './service-manager';
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants';
+import { getString, isRecord } from '../utils/type-guards';
 
 /**
  * Manages command registration for the Bibliography plugin
@@ -58,7 +59,8 @@ export class CommandRegistry {
                 const cache = this.app.metadataCache.getFileCache(activeFile);
                 if (!cache || !cache.frontmatter) return false;
 
-                const frontmatter = cache.frontmatter;
+                const frontmatter: unknown = cache.frontmatter;
+                if (!isRecord(frontmatter)) return false;
                 const tags = frontmatter.tags;
                 if (!tags || !Array.isArray(tags) || !tags.includes(this.settings.literatureNoteTag)) {
                     return false;
@@ -116,8 +118,11 @@ export class CommandRegistry {
                 const cache = this.app.metadataCache.getFileCache(activeFile);
                 if (!cache || !cache.frontmatter) return false;
 
-                const frontmatter = cache.frontmatter;
-                if (!frontmatter.type || !['book', 'collection', 'document'].includes(frontmatter.type)) {
+                const frontmatter: unknown = cache.frontmatter;
+                if (!isRecord(frontmatter)) return false;
+
+                const type = getString(frontmatter, 'type');
+                if (!type || !['book', 'collection', 'document'].includes(type)) {
                     return false;
                 }
 
@@ -163,13 +168,13 @@ export class CommandRegistry {
         // Export BibTeX command
         this.plugin.addCommand({
             id: 'export-bibtex',
-            name: 'Export bibliography as BibTeX',
+            name: 'Export bibliography as bibtex',
             callback: async () => {
                 try {
                     new Notice(SUCCESS_MESSAGES.BIBTEX_EXPORTING);
                     const builder = new BibliographyBuilder(this.app, this.settings);
                     await builder.exportBibTeX();
-                } catch (_error) {
+                } catch {
                     // Errors are logged by BibliographyBuilder
                 }
             },

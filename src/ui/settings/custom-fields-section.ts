@@ -22,7 +22,7 @@ export function renderCustomFrontmatterFieldsSection(
         p.createEl('strong', { text: 'Warning: ' });
         p.appendText('Do not define templates for CSL-standard fields, as doing so may produce invalid bibliography files. ');
         p.createEl('a', {
-            text: 'See the CSL specification',
+            text: 'See the csl specification',
             href: 'https://docs.citationstyles.org/en/stable/specification.html#appendix-iv-variables'
         });
         p.appendText(' for a list of standard variables.');
@@ -78,8 +78,7 @@ function addCustomFieldRow(
     let nameInputEl: HTMLInputElement;
 
     const warningEl = fieldEl.createDiv({
-        cls: 'custom-field-warning',
-        attr: { style: 'display: none;' }
+        cls: 'custom-field-warning warning-hidden'
     });
 
     const updateWarningMessage = (fieldName: string) => {
@@ -87,33 +86,31 @@ function addCustomFieldRow(
             warningEl.empty();
 
             const callout = warningEl.createDiv({ cls: 'callout callout-error' });
-            callout.createDiv({ cls: 'callout-title', text: '❌ CSL Field Conflict' });
+            callout.createDiv({ cls: 'callout-title', text: 'Csl field conflict' });
 
             const content = callout.createDiv({ cls: 'callout-content' });
             content.createEl('p').createEl('strong', { text: `"${fieldName}"` }).parentElement?.appendText(' is a standard CSL field and should not be used for custom frontmatter templates.');
 
-            content.createEl('p', { text: 'Using CSL fields in custom templates may cause:' });
+            content.createEl('p', { text: 'Using csl fields in custom templates may cause:' });
             const list = content.createEl('ul');
             list.createEl('li', { text: 'Conflicts with bibliography export tools' });
-            list.createEl('li', { text: 'Invalid CSL-JSON output' });
+            list.createEl('li', { text: 'Invalid csl-JSON output' });
             list.createEl('li', { text: 'Unexpected template behavior' });
 
             content.createEl('p', { text: `Please choose a different field name (e.g., "custom-${fieldName}", "${fieldName}-note", etc.)` });
 
             const linkP = content.createEl('p');
             linkP.createEl('a', {
-                text: 'View CSL specification →',
+                text: 'View csl specification →',
                 href: 'https://docs.citationstyles.org/en/stable/specification.html#appendix-iv-variables',
                 attr: { target: '_blank' }
             });
 
             warningEl.removeClass('warning-hidden');
             warningEl.addClass('warning-visible');
-            warningEl.style.display = 'block';
         } else {
             warningEl.removeClass('warning-visible');
             warningEl.addClass('warning-hidden');
-            warningEl.style.display = 'none';
         }
     };
 
@@ -160,21 +157,23 @@ function addCustomFieldRow(
         }
     });
 
-    nameInputEl.addEventListener('change', async (event) => {
-        const value = (event.target as HTMLInputElement).value;
+    nameInputEl.addEventListener('change', (event) => {
+        void (async () => {
+            const value = (event.target as HTMLInputElement).value;
 
-        if (validateCslField(value)) {
-            nameInputEl.addClass('is-invalid');
-            new Notice(`"${value}" is a CSL standard field. Using it may produce invalid bibliography files.`, 5000);
-            updateWarningMessage(value);
-        } else {
-            nameInputEl.removeClass('is-invalid');
-            warningEl.removeClass('warning-visible');
-            warningEl.addClass('warning-hidden');
-        }
+            if (validateCslField(value)) {
+                nameInputEl.addClass('is-invalid');
+                new Notice(`"${value}" is a CSL standard field. Using it may produce invalid bibliography files.`, 5000);
+                updateWarningMessage(value);
+            } else {
+                nameInputEl.removeClass('is-invalid');
+                warningEl.removeClass('warning-visible');
+                warningEl.addClass('warning-hidden');
+            }
 
-        field.name = value;
-        await plugin.saveSettings();
+            field.name = value;
+            await plugin.saveSettings();
+        })();
     });
 
     if (field.name && validateCslField(field.name)) {
@@ -204,10 +203,12 @@ function addCustomFieldRow(
     });
     templateTextarea.value = field.template;
 
-    templateTextarea.addEventListener('change', async (event) => {
-        const value = (event.target as HTMLTextAreaElement).value;
-        field.template = value;
-        await plugin.saveSettings();
+    templateTextarea.addEventListener('change', (event) => {
+        void (async () => {
+            const value = (event.target as HTMLTextAreaElement).value;
+            field.template = value;
+            await plugin.saveSettings();
+        })();
     });
 
     return fieldEl;
@@ -279,7 +280,7 @@ function addFavoriteLanguageRow(
                 await plugin.saveSettings();
             }))
         .addText(text => text
-            .setPlaceholder('Language name (e.g., English, Norwegian)')
+            .setPlaceholder('Language name (e.g., english, norwegian)')
             .setValue(lang.name)
             .onChange(async (value) => {
                 plugin.settings.favoriteLanguages[index].name = value.trim();

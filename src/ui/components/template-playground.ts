@@ -1,7 +1,8 @@
-import { TextAreaComponent, ButtonComponent, setIcon } from "obsidian";
+import { TextAreaComponent } from "obsidian";
 import { TemplateEngine } from "../../utils/template-engine";
 import { analyzeYamlTemplateOutput } from "../../utils/yaml-utils";
 import { SampleDataGenerator } from "../../utils/sample-data-generator";
+import { errorMessage, formatUnknown, getString } from "../../utils/type-guards";
 
 /**
  * Template mode for the playground
@@ -20,7 +21,7 @@ export class TemplatePlaygroundComponent {
     private container: HTMLElement;
     private templateField: TextAreaComponent;
     private previewContent: HTMLElement;
-    private sampleData: Record<string, any>;
+    private sampleData: Record<string, unknown>;
     private currentMode: TemplateMode = TemplateMode.Normal;
 
     /**
@@ -43,7 +44,7 @@ export class TemplatePlaygroundComponent {
         });
         
         // Create description
-        const descriptionEl = this.container.createEl('p', {
+        this.container.createEl('p', {
             text: 'Use this playground to experiment with template syntax and see the results in real-time.',
             cls: 'template-playground-description'
         });
@@ -64,7 +65,7 @@ export class TemplatePlaygroundComponent {
         this.templateField
             .setPlaceholder('Enter a template to preview (e.g., {{title}} by {{authors}})')
             .setValue('# {{title}}\n\nBy: {{authors}}\n\nPublished in: {{container-title}} ({{year}})\n\n{{#abstract}}**Abstract**: {{abstract}}{{/abstract}}')
-            .onChange(this.updatePreview.bind(this));
+            .onChange(() => this.updatePreview());
         
         this.templateField.inputEl.addClass('template-playground-textarea');
         
@@ -353,17 +354,20 @@ export class TemplatePlaygroundComponent {
                 cls: 'tab-pane active',
                 attr: { id: 'basic-tab' }
             });
+            const abstractPreview = typeof this.sampleData.abstract === 'string'
+                ? this.sampleData.abstract.substring(0, 50)
+                : '';
             
             basicTab.createEl('code', {
-                text: `id: "${this.sampleData.id}"\n` +
-                      `citekey: "${this.sampleData.citekey}"\n` +
-                      `title: "${this.sampleData.title}"\n` +
-                      `type: "${this.sampleData.type}"\n` + 
-                      `year: ${this.sampleData.year}\n` +
-                      `month: ${this.sampleData.month}\n` +
-                      `day: ${this.sampleData.day}\n` +
-                      `currentDate: "${this.sampleData.currentDate}"\n` +
-                      `abstract: "${this.sampleData.abstract?.substring(0, 50)}..."`
+                text: `id: "${getString(this.sampleData, 'id') || ''}"\n` +
+                      `citekey: "${getString(this.sampleData, 'citekey') || ''}"\n` +
+                      `title: "${getString(this.sampleData, 'title') || ''}"\n` +
+                      `type: "${getString(this.sampleData, 'type') || ''}"\n` + 
+                      `year: ${formatUnknown(this.sampleData.year)}\n` +
+                      `month: ${formatUnknown(this.sampleData.month)}\n` +
+                      `day: ${formatUnknown(this.sampleData.day)}\n` +
+                      `currentDate: "${getString(this.sampleData, 'currentDate') || ''}"\n` +
+                      `abstract: "${abstractPreview}..."`
             });
             
             const authorsTab = tabContent.createEl('div', {
@@ -372,7 +376,7 @@ export class TemplatePlaygroundComponent {
             });
             
             authorsTab.createEl('code', {
-                text: `authors: "${this.sampleData.authors}"\n` +
+                text: `authors: "${getString(this.sampleData, 'authors') || ''}"\n` +
                       `authors_family: ${JSON.stringify(this.sampleData.authors_family)}\n` +
                       `authors_given: ${JSON.stringify(this.sampleData.authors_given)}\n` +
                       `editors: ${JSON.stringify(this.sampleData.editors)}\n` +
@@ -386,14 +390,14 @@ export class TemplatePlaygroundComponent {
             });
             
             publishingTab.createEl('code', {
-                text: `container-title: "${this.sampleData["container-title"]}"\n` +
-                      `volume: ${this.sampleData.volume}\n` +
-                      `issue: ${this.sampleData.issue}\n` +
-                      `page: "${this.sampleData.page}"\n` +
-                      `publisher: "${this.sampleData.publisher}"\n` +
-                      `publisher-place: "${this.sampleData["publisher-place"]}"\n` +
-                      `DOI: "${this.sampleData.DOI}"\n` +
-                      `URL: "${this.sampleData.URL}"`
+                text: `container-title: "${getString(this.sampleData, 'container-title') || ''}"\n` +
+                      `volume: ${formatUnknown(this.sampleData.volume)}\n` +
+                      `issue: ${formatUnknown(this.sampleData.issue)}\n` +
+                      `page: "${getString(this.sampleData, 'page') || ''}"\n` +
+                      `publisher: "${getString(this.sampleData, 'publisher') || ''}"\n` +
+                      `publisher-place: "${getString(this.sampleData, 'publisher-place') || ''}"\n` +
+                      `DOI: "${getString(this.sampleData, 'DOI') || ''}"\n` +
+                      `URL: "${getString(this.sampleData, 'URL') || ''}"`
             });
             
             const attachmentsTab = tabContent.createEl('div', {
@@ -402,8 +406,8 @@ export class TemplatePlaygroundComponent {
             });
             
             attachmentsTab.createEl('code', {
-                text: `pdflink: "${this.sampleData.raw_pdflink}"\n` +
-                      `htmllink: "${this.sampleData.htmllink}"\n` +
+                text: `pdflink: "${getString(this.sampleData, 'raw_pdflink') || ''}"\n` +
+                      `htmllink: "${getString(this.sampleData, 'htmllink') || ''}"\n` +
                       `attachments: ${JSON.stringify(this.sampleData.attachments, null, 2)}\n` +
                       `quoted_attachments: ${JSON.stringify(this.sampleData.quoted_attachments, null, 2)}`
             });
@@ -414,10 +418,10 @@ export class TemplatePlaygroundComponent {
             });
             
             miscTab.createEl('code', {
-                text: `language: "${this.sampleData.language}"\n` +
+                text: `language: "${getString(this.sampleData, 'language') || ''}"\n` +
                       `links: ${JSON.stringify(this.sampleData.links, null, 2)}\n` +
                       `linkPaths: ${JSON.stringify(this.sampleData.linkPaths, null, 2)}\n` +
-                      `links_string: "${this.sampleData.links_string}"`
+                      `links_string: "${getString(this.sampleData, 'links_string') || ''}"`
             });
         });
         
@@ -427,7 +431,7 @@ export class TemplatePlaygroundComponent {
         });
         
         // Initial render
-        setTimeout(this.updatePreview.bind(this), 50);
+        window.setTimeout(() => this.updatePreview(), 50);
     }
     
     /**
@@ -448,33 +452,37 @@ export class TemplatePlaygroundComponent {
                     
                 case TemplateMode.Citekey:
                     // In Citekey mode, render with citekey sanitization
-                    const citekeyRendered = TemplateEngine.render(template, modeSpecificData, {
-                        sanitizeForCitekey: true
-                    });
-                    
-                    this.previewContent.empty();
-                    this.previewContent.createEl('div', { 
-                        cls: 'template-playground-rendered citekey-rendering',
-                        text: citekeyRendered 
-                    });
+                    {
+                        const citekeyRendered = TemplateEngine.render(template, modeSpecificData, {
+                            sanitizeForCitekey: true
+                        });
+                        
+                        this.previewContent.empty();
+                        this.previewContent.createEl('div', { 
+                            cls: 'template-playground-rendered citekey-rendering',
+                            text: citekeyRendered 
+                        });
+                    }
                     break;
                     
                 case TemplateMode.Normal:
                 default:
                     // Standard rendering with no special options
-                    const rendered = TemplateEngine.render(template, modeSpecificData);
-                    
-                    this.previewContent.empty();
-                    this.previewContent.createEl('div', { 
-                        cls: 'template-playground-rendered',
-                        text: rendered 
-                    });
+                    {
+                        const rendered = TemplateEngine.render(template, modeSpecificData);
+                        
+                        this.previewContent.empty();
+                        this.previewContent.createEl('div', { 
+                            cls: 'template-playground-rendered',
+                            text: rendered 
+                        });
+                    }
                     break;
             }
         } catch (error) {
             this.previewContent.empty();
             this.previewContent.createEl('div', { 
-                text: `Error: ${error.message}`,
+                text: `Error: ${errorMessage(error)}`,
                 cls: 'template-playground-error'
             });
         }
@@ -484,7 +492,7 @@ export class TemplatePlaygroundComponent {
      * Get mode-specific sample data to better emulate how each part of the 
      * system processes templates
      */
-    private getModeSpecificSampleData(mode: TemplateMode): Record<string, any> {
+    private getModeSpecificSampleData(mode: TemplateMode): Record<string, unknown> {
         // Map the internal enum to the format expected by the sample data generator
         let dataMode: 'normal' | 'citekey' | 'frontmatter' = 'normal';
         
@@ -510,7 +518,7 @@ export class TemplatePlaygroundComponent {
      * Renders a preview of how a template would be handled in frontmatter
      * in the context of BibLib
      */
-    private renderFrontmatterPreview(template: string, data: Record<string, any>): void {
+    private renderFrontmatterPreview(template: string, data: Record<string, unknown>): void {
         try {
             // Check if this is potentially an array template
             const isArrayTemplate = template.trim().startsWith('[') && template.trim().endsWith(']');
@@ -568,14 +576,14 @@ export class TemplatePlaygroundComponent {
             });
             
             biblibNoteEl.createEl('h4', {
-                text: 'Creating Arrays in BibLib:'
+                text: 'Creating arrays in biblib:'
             });
 
             // Create the explanation
             const guideContainer = biblibNoteEl.createEl('div', { cls: 'yaml-guide-container' });
             
             guideContainer.createEl('p', { 
-                text: 'To create arrays in BibLib templates, use the JSON array format with square brackets, commas, and quotes:',
+                text: 'To create arrays in biblib templates, use the JSON array format with square brackets, commas, and quotes:',
                 cls: 'biblib-array-explanation'
             });
             
@@ -595,16 +603,16 @@ export class TemplatePlaygroundComponent {
             jsonExampleContainer.createEl('p', { text: 'Renders correctly in frontmatter:' });
             jsonExampleContainer.createEl('pre', {}, pre => {
                 pre.createEl('code', { 
-                    text: 'author-links: ["[[Author/John Smith]]","[[Author/Maria Rodriguez]]","[[Author/Wei Zhang]]"]'
+                    text: 'Author-links: ["[[Author/john smith]]","[[author/maria rodriguez]]","[[author/wei zhang]]"]'
                 });
             });
             
             // Common mistake
-            guideContainer.createEl('h5', { text: 'Common Mistake:', cls: 'yaml-method-heading' });
+            guideContainer.createEl('h5', { text: 'Common mistake:', cls: 'yaml-method-heading' });
             
             const mistakeContainer = guideContainer.createEl('div', { cls: 'yaml-example-container' });
             
-            mistakeContainer.createEl('p', { text: 'Using dash prefixes will NOT automatically create arrays:' });
+            mistakeContainer.createEl('p', { text: 'Using dash prefixes will not automatically create arrays:' });
             mistakeContainer.createEl('pre', {}, pre => {
                 pre.createEl('code', { 
                     text: '{{#authors}}- [[Author/{{.}}]]\n{{/authors}}'
@@ -614,13 +622,13 @@ export class TemplatePlaygroundComponent {
             mistakeContainer.createEl('p', { text: 'This renders as multi-line text, not an array:' });
             mistakeContainer.createEl('pre', {}, pre => {
                 pre.createEl('code', { 
-                    text: 'author-links: |\n  - [[Author/John Smith]]\n  - [[Author/Maria Rodriguez]]\n  - [[Author/Wei Zhang]]'
+                    text: 'Author-links: |\n  - [[Author/john smith]]\n  - [[author/maria rodriguez]]\n  - [[author/wei zhang]]'
                 });
             });
         } catch (error) {
             this.previewContent.empty();
             this.previewContent.createEl('div', { 
-                text: `Error: ${error.message}`,
+                text: `Error: ${errorMessage(error)}`,
                 cls: 'template-playground-error'
             });
         }

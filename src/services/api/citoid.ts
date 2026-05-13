@@ -7,6 +7,7 @@ import '@citation-js/plugin-pubmed';
 import '@citation-js/plugin-wikidata';
 
 import '@citation-js/plugin-bibtex';
+import { errorMessage } from '../../utils/type-guards';
 
 export class CitoidService {
     private apiUrl: string = 'https://en.wikipedia.org/api/rest_v1/data/citation/bibtex/';
@@ -59,7 +60,6 @@ export class CitoidService {
 
                 if (!text || !text.trim().startsWith('@')) {
                     // Try citation-js as final fallback
-                    console.log('Citoid endpoints failed, attempting citation-js fallback');
                     new Notice('Using citation-js fallback for identifier lookup');
 
                     try {
@@ -71,13 +71,13 @@ export class CitoidService {
                         }
 
                         text = bibliography;
-                    } catch (citeErr) {
+                    } catch (citeErr: unknown) {
                         console.error('citation-js fallback failed:', citeErr);
-                        throw new Error(`All BibTeX fetch methods failed. Last error: ${citeErr.message}`);
+                        throw new Error(`All BibTeX fetch methods failed. Last error: ${errorMessage(citeErr)}`);
                     }
                 }
             }
-            return text!;
+            return text;
         } catch (err) {
             console.error('Error fetching BibTeX from Citoid:', err);
             throw err;

@@ -7,9 +7,9 @@ import BibliographyPlugin from '../../../main';
 export function renderGeneralSettings(containerEl: HTMLElement, plugin: BibliographyPlugin): void {
     new Setting(containerEl)
         .setName('Literature note tag')
-        .setDesc('Tag(s) used to identify literature notes in frontmatter. Separate multiple tags with commas or spaces (e.g., "literature_note, excalidraw").')
+        .setDesc('Tag(s) used to identify literature notes in frontmatter. Separate multiple tags with commas or spaces (e.g., "literature_note, Excalidraw").')
         .addText(text => text
-            .setPlaceholder('literature_note')
+            .setPlaceholder('Literature_note')
             .setValue(plugin.settings.literatureNoteTag)
             .onChange(async (value) => {
                 plugin.settings.literatureNoteTag = value.trim();

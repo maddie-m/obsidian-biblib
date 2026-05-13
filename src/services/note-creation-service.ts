@@ -1,4 +1,4 @@
-import { App, Notice, TFile, TAbstractFile, normalizePath } from 'obsidian';
+import { App, Notice, TFile, normalizePath } from 'obsidian';
 import { BibliographyPluginSettings, parseLiteratureNoteTags } from '../types';
 import { Citation, Contributor, AdditionalField, AttachmentData, AttachmentType } from '../types/citation';
 import { ReferenceParserService, ParsedReference } from './reference-parser-service';
@@ -6,6 +6,22 @@ import { NoteContentBuilderService } from './note-content-builder-service';
 import { AttachmentManagerService } from './attachment-manager-service';
 import { CitekeyGenerator } from '../utils/citekey-generator';
 import { DateParser } from '../utils/date-parser';
+import { TemplateEngine } from '../utils/template-engine';
+import { CSL_TYPES } from '../utils/csl-variables';
+import {
+  asRecordArray,
+  errorMessage,
+  getString,
+  getStringOrNumber,
+  isRecord,
+  UnknownRecord,
+} from '../utils/type-guards';
+
+const toCitationType = (value: unknown): Citation['type'] => {
+  return typeof value === 'string' && (CSL_TYPES as readonly string[]).includes(value)
+    ? value as Citation['type']
+    : 'document';
+};
 
 /**
  * Input for creating a single literature note
@@ -129,7 +145,7 @@ export class NoteCreationService {
         if (folderPath) {
           try {
             await this.app.vault.createFolder(folderPath);
-          } catch (error) {
+	          } catch {
             // If the folder already exists, that's fine
             // No action needed, as createFolder throws when the folder exists
           }
@@ -197,9 +213,9 @@ export class NoteCreationService {
       return {
         created: 0,
         skipped: 0,
-        errors: [{ 
-          message: `Failed to import file: ${error instanceof Error ? error.message : String(error)}` 
-        }],
+	        errors: [{ 
+	          message: `Failed to import file: ${errorMessage(error)}` 
+	        }],
         attachmentsImported: 0
       };
     }
@@ -256,21 +272,21 @@ export class NoteCreationService {
         let attachmentPath = '';
         
         const parsedRef = parsedReferences[i];
-        const refTitle = parsedRef.cslData.title || 'Untitled';
+	        const refTitle = getString(parsedRef.cslData, 'title') || 'Untitled';
         new Notice(`Importing reference ${i + 1} of ${totalReferences}: ${refTitle}`, 2000);
         
         try {
           // Determine citekey
           let citekey: string;
-          if (importSettings.citekeyPreference === 'imported' && 
-              (parsedRef.originalId || parsedRef.cslData.id)) {
-            citekey = parsedRef.originalId || parsedRef.cslData.id;
+	          const importedCitekey = parsedRef.originalId || getString(parsedRef.cslData, 'id');
+	          if (importSettings.citekeyPreference === 'imported' && importedCitekey) {
+	            citekey = importedCitekey;
           } else {
             citekey = CitekeyGenerator.generate(parsedRef.cslData, this.settings.citekeyOptions);
           }
           
           // Sanitize citekey
-          citekey = citekey.replace(/[^a-zA-Z0-9_\-]+/g, '_');
+	          citekey = citekey.replace(/[^a-zA-Z0-9_-]+/g, '_');
           
           // Check for existing note
           const notePath = this.getLiteratureNotePath(citekey, parsedRef.cslData);
@@ -327,7 +343,7 @@ export class NoteCreationService {
 
                   // --- Strategy 3: Try common Zotero "files/ID/filename" structure (if not found yet) ---
                   if (!sourceTFile) {
-                    const filesMatch = filePath.match(/files\/([^\/]+)\/([^\/]+)$/);
+	                    const filesMatch = filePath.match(/files\/([^/]+)\/([^/]+)$/);
                     if (filesMatch) {
                       const id = filesMatch[1];
                       const filename = filesMatch[2];
@@ -449,7 +465,7 @@ export class NoteCreationService {
               if (folderPath) {
                 try {
                   await this.app.vault.createFolder(folderPath);
-                } catch (error) {
+	                } catch {
                   // If the folder already exists, that's fine
                   // No action needed, as createFolder throws when the folder exists
                 }
@@ -463,9 +479,7 @@ export class NoteCreationService {
         } catch (referenceError) {
           console.error(`Error processing reference ${i + 1}:`, referenceError);
           errors.push({
-            message: `Error processing reference: ${
-              referenceError instanceof Error ? referenceError.message : String(referenceError)
-            }`,
+	            message: `Error processing reference: ${errorMessage(referenceError)}`,
             entryTitle: refTitle
           });
         }
@@ -480,7 +494,7 @@ export class NoteCreationService {
     } catch (error) {
       console.error('Error during bulk import:', error);
       errors.push({ 
-        message: `Bulk import failed: ${error instanceof Error ? error.message : String(error)}` 
+	        message: `Bulk import failed: ${errorMessage(error)}` 
       });
       return { created, skipped, errors, attachmentsImported };
     }
@@ -501,36 +515,36 @@ export class NoteCreationService {
     additionalFields: AdditionalField[];
     annotationContent?: string
   } {
-    const cslObject = parsedRef.cslData;
-    
-    // Extract date fields using DateParser
-    const dateFields = DateParser.extractFields(cslObject);
+	    const cslObject = parsedRef.cslData;
+	    
+	    // Extract date fields using DateParser
+	    const dateFields = DateParser.extractFields(cslObject);
 
     // Build citation object
-    const citation: Citation = {
-      id: citekey,
-      type: cslObject.type || 'document',
-      title: cslObject.title || 'Untitled',
-      year: dateFields.year,
-      month: dateFields.month,
-      day: dateFields.day,
-      'title-short': cslObject['title-short'] || '',
-      URL: cslObject.URL || '',
-      DOI: cslObject.DOI || '',
-      'container-title': cslObject['container-title'] || '',
-      publisher: cslObject.publisher || '',
-      'publisher-place': cslObject['publisher-place'] || '',
-      edition: cslObject.edition || '',
-      volume: cslObject.volume || '',
-      number: cslObject.number || cslObject.issue || '',
-      page: cslObject.page || '',
-      language: cslObject.language || '',
-      abstract: cslObject.abstract || '',
+	    const citation: Citation = {
+	      id: citekey,
+	      type: toCitationType(cslObject.type),
+	      title: getString(cslObject, 'title') || 'Untitled',
+	      year: dateFields.year,
+	      month: dateFields.month,
+	      day: dateFields.day,
+	      'title-short': getString(cslObject, 'title-short') || '',
+	      URL: getString(cslObject, 'URL') || '',
+	      DOI: getString(cslObject, 'DOI') || '',
+	      'container-title': getString(cslObject, 'container-title') || '',
+	      publisher: getString(cslObject, 'publisher') || '',
+	      'publisher-place': getString(cslObject, 'publisher-place') || '',
+	      edition: getStringOrNumber(cslObject, 'edition') || '',
+	      volume: getStringOrNumber(cslObject, 'volume') || '',
+	      number: getStringOrNumber(cslObject, 'number') || getStringOrNumber(cslObject, 'issue') || '',
+	      page: getString(cslObject, 'page') || '',
+	      language: getString(cslObject, 'language') || '',
+	      abstract: getString(cslObject, 'abstract') || '',
       tags: parseLiteratureNoteTags(this.settings.literatureNoteTag),
     };
     
     // Extract contributors
-    const contributors: Contributor[] = this.extractContributors(cslObject);
+	    const contributors: Contributor[] = this.extractContributors(cslObject);
     
     // Extract additional fields
     const commonFields = new Set([
@@ -566,13 +580,14 @@ export class NoteCreationService {
     
     // Extract annotation content if available
     let annotationContent: string | undefined;
-    if (parsedRef._sourceFields?.annote) {
-      if (Array.isArray(parsedRef._sourceFields.annote)) {
-        annotationContent = parsedRef._sourceFields.annote.join('\n\n---\n\n');
-      } else {
-        annotationContent = parsedRef._sourceFields.annote;
-      }
-    }
+	    const annote = parsedRef._sourceFields?.annote;
+	    if (annote) {
+	      if (Array.isArray(annote)) {
+	        annotationContent = annote.join('\n\n---\n\n');
+	      } else {
+	        annotationContent = annote;
+	      }
+	    }
     
     return { citation, contributors, additionalFields, annotationContent };
   }
@@ -580,25 +595,24 @@ export class NoteCreationService {
   /**
    * Extract contributors from CSL object
    */
-  private extractContributors(cslObject: any): Contributor[] {
+	  private extractContributors(cslObject: UnknownRecord): Contributor[] {
     const contributors: Contributor[] = [];
     
     // Process common contributor types
     const contributorTypes = ['author', 'editor', 'translator', 'contributor', 'director'];
     
     for (const type of contributorTypes) {
-      if (cslObject[type] && Array.isArray(cslObject[type])) {
-        for (const person of cslObject[type]) {
-          if (typeof person === 'object' && person !== null) {
-            contributors.push({
-              role: type,
-              family: person.family || '',
-              given: person.given || '',
-              literal: person.literal || ''
-            });
-          }
-        }
-      }
+	      const people = asRecordArray(cslObject[type]);
+	      if (people.length > 0) {
+	        for (const person of people) {
+	            contributors.push({
+	              role: type,
+	              family: getString(person, 'family') || '',
+	              given: getString(person, 'given') || '',
+	              literal: getString(person, 'literal') || ''
+	            });
+	        }
+	      }
     }
     
     return contributors;
@@ -607,8 +621,8 @@ export class NoteCreationService {
   /**
    * Get the full, normalized path for a literature note
    */
-  private getLiteratureNotePath(id: string, citation?: any): string {
-    let fileName = '';
+	  private getLiteratureNotePath(id: string, citation?: unknown): string {
+	    let fileName = '';
     
     // If using the new filename template, use it to generate the filename
     if (this.settings.filenameTemplate) {
@@ -616,61 +630,61 @@ export class NoteCreationService {
       const filenameTemplate = this.settings.filenameTemplate;
       
       // Set up the variables to use in the template
-      const variables: any = {
-        citekey: id,
+	      const variables: Record<string, unknown> = {
+	        citekey: id,
         // Add date-related variables
         currentDate: new Date().toISOString().split('T')[0], // YYYY-MM-DD format
       };
       
       // If citation data is available, add those variables too
-      if (citation) {
-        Object.assign(variables, {
-          title: citation.title || '',
-          year: citation.year || '',
-          type: citation.type || '',
-          'container-title': citation['container-title'] || '',
-        });
+	      const citationRecord = isRecord(citation) ? citation : undefined;
+	      if (citationRecord) {
+	        Object.assign(variables, {
+	          title: getString(citationRecord, 'title') || '',
+	          year: getStringOrNumber(citationRecord, 'year') || '',
+	          type: getString(citationRecord, 'type') || '',
+	          'container-title': getString(citationRecord, 'container-title') || '',
+	        });
 
-        // Add author-related template variables
-        // Extract authors from citation.author (CSL-JSON format)
-        const authors = citation.author || [];
-        if (Array.isArray(authors) && authors.length > 0) {
-          // authors: Array of formatted full names (e.g., ["John Smith", "Jane Doe"])
-          variables.authors = authors.map((a: any) => {
-            if (a.literal) return a.literal;
-            const family = a.family || '';
-            const given = a.given || '';
-            if (family && given) return `${given} ${family}`;
-            return family || given || '';
-          }).filter(Boolean);
+	        // Add author-related template variables
+	        // Extract authors from citation.author (CSL-JSON format)
+	        const authors = asRecordArray(citationRecord.author);
+	        if (authors.length > 0) {
+	          // authors: Array of formatted full names (e.g., ["John Smith", "Jane Doe"])
+	          variables.authors = authors.map((a) => {
+	            const literal = getString(a, 'literal');
+	            if (literal) return literal;
+	            const family = getString(a, 'family') || '';
+	            const given = getString(a, 'given') || '';
+	            if (family && given) return `${given} ${family}`;
+	            return family || given || '';
+	          }).filter(Boolean);
 
-          // authors_family: Array of family names only
-          variables.authors_family = authors
-            .map((a: any) => a.family || a.literal || '')
-            .filter(Boolean);
+	          // authors_family: Array of family names only
+	          variables.authors_family = authors
+	            .map((a) => getString(a, 'family') || getString(a, 'literal') || '')
+	            .filter(Boolean);
 
-          // authors_given: Array of given names only
-          variables.authors_given = authors
-            .map((a: any) => a.given || '')
-            .filter(Boolean);
+	          // authors_given: Array of given names only
+	          variables.authors_given = authors
+	            .map((a) => getString(a, 'given') || '')
+	            .filter(Boolean);
 
           // author: First author's family name (for citekey-style templates)
-          const firstAuthor = authors[0];
-          if (firstAuthor) {
-            variables.author = firstAuthor.family || firstAuthor.literal || '';
-          }
-        }
-      }
-      
-      // Use template engine to render the filename
-      // Import the TemplateEngine class if not already imported
-      const { TemplateEngine } = require('../utils/template-engine');
-      fileName = TemplateEngine.render(filenameTemplate, variables);
+	          const firstAuthor = authors[0];
+	          if (firstAuthor) {
+	            variables.author = getString(firstAuthor, 'family') || getString(firstAuthor, 'literal') || '';
+	          }
+	        }
+	      }
+	      
+	      // Use template engine to render the filename
+	      fileName = TemplateEngine.render(filenameTemplate, variables);
       
       // Fallback if template renders to empty string
       if (!fileName || fileName.trim() === '') {
         // Use default format: citekey with @ prefix
-        const sanitizedId = id.replace(/[^a-zA-Z0-9_\-]+/g, '_');
+	      const sanitizedId = id.replace(/[^a-zA-Z0-9_-]+/g, '_');
         fileName = `@${sanitizedId}`;
       }
       
@@ -679,7 +693,7 @@ export class NoteCreationService {
     } else {
       // This case should rarely happen as filenameTemplate should always have a default value
       // But just in case, use the same default format as the fallback
-      const sanitizedId = id.replace(/[^a-zA-Z0-9_\-]+/g, '_');
+	      const sanitizedId = id.replace(/[^a-zA-Z0-9_-]+/g, '_');
       fileName = `@${sanitizedId}`;
     }
     
@@ -725,34 +739,36 @@ export class NoteCreationService {
    * Get all literature notes, typically books, from the vault
    * @returns Array of book entries with metadata
    */
-  async getBookEntries(): Promise<{id: string, title: string, path: string, frontmatter: any}[]> {
-    const bookEntries: {id: string, title: string, path: string, frontmatter: any}[] = [];
+	  async getBookEntries(): Promise<{id: string, title: string, path: string, frontmatter: UnknownRecord}[]> {
+	    const bookEntries: {id: string, title: string, path: string, frontmatter: UnknownRecord}[] = [];
     
     const markdownFiles = this.app.vault.getMarkdownFiles();
     
     for (const file of markdownFiles) {
       try {
         const cache = this.app.metadataCache.getFileCache(file);
-        const frontmatter = cache?.frontmatter;
-        
-        if (!frontmatter) continue;
+	        const frontmatter: unknown = cache?.frontmatter;
+	        
+	        if (!isRecord(frontmatter)) continue;
         
         const tags = frontmatter.tags;
         const configuredTags = parseLiteratureNoteTags(this.settings.literatureNoteTag);
         if (!tags || !Array.isArray(tags) || !configuredTags.some(configuredTag => tags.includes(configuredTag))) continue;
         
-        const type = frontmatter.type;
-        if (!type || !['book', 'collection', 'document'].includes(type)) continue;
-        
-        // Ensure required fields exist for a book entry
-        if (!frontmatter.id || !frontmatter.title) {
-          // Skip invalid book entries without required fields
-          continue;
-        }
-        
-        bookEntries.push({
-          id: frontmatter.id,
-          title: frontmatter.title,
+	        const type = getString(frontmatter, 'type');
+	        if (!type || !['book', 'collection', 'document'].includes(type)) continue;
+	        
+	        // Ensure required fields exist for a book entry
+	        const id = getString(frontmatter, 'id');
+	        const title = getString(frontmatter, 'title');
+	        if (!id || !title) {
+	          // Skip invalid book entries without required fields
+	          continue;
+	        }
+	        
+	        bookEntries.push({
+	          id,
+	          title,
           path: file.path, // Include the path here
           frontmatter // Include full frontmatter for potential use
         });
@@ -771,7 +787,7 @@ export class NoteCreationService {
    * @param path Path to the note to get
    * @returns Book entry data or null if not found
    */
-  async getBookEntryByPath(path: string): Promise<{id: string, title: string, path: string, frontmatter: any} | null> {
+	  async getBookEntryByPath(path: string): Promise<{id: string, title: string, path: string, frontmatter: UnknownRecord} | null> {
     try {
       const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
       if (!(file instanceof TFile)) {
@@ -780,19 +796,24 @@ export class NoteCreationService {
       }
       
       const cache = this.app.metadataCache.getFileCache(file);
-      const frontmatter = cache?.frontmatter;
-      
-      // Validate essential fields for a book entry
-      if (!frontmatter || !frontmatter.id || !frontmatter.title || !frontmatter.type || 
-          !['book', 'collection', 'document'].includes(frontmatter.type)) {
-        // Not a valid book entry
-        return null;
-      }
-      
-      // Return object now includes path
-      return {
-        id: frontmatter.id,
-        title: frontmatter.title,
+	      const frontmatter: unknown = cache?.frontmatter;
+	      if (!isRecord(frontmatter)) {
+	        return null;
+	      }
+	      const id = getString(frontmatter, 'id');
+	      const title = getString(frontmatter, 'title');
+	      const type = getString(frontmatter, 'type');
+	      
+	      // Validate essential fields for a book entry
+	      if (!id || !title || !type || !['book', 'collection', 'document'].includes(type)) {
+	        // Not a valid book entry
+	        return null;
+	      }
+	      
+	      // Return object now includes path
+	      return {
+	        id,
+	        title,
         path: file.path, // Include the path
         frontmatter
       };

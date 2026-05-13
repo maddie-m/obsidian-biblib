@@ -22,7 +22,7 @@ export function processYamlArray(result: string): string {
             // Try to parse as JSON - if it works, great
             JSON.parse(result);
             return result; // Already valid JSON, return as is
-        } catch (e) {
+        } catch {
             // Failed to parse as JSON, try to fix
             
             // Special case for empty arrays after template substitution
@@ -92,12 +92,12 @@ export function analyzeYamlTemplateOutput(template: string, rendered: string): {
     if (rendered.trim().startsWith('[') && rendered.trim().endsWith(']')) {
         try {
             // Attempt to parse as JSON to see if it's valid
-            const parsedArray = JSON.parse(rendered.trim());
+            const parsedArray: unknown = JSON.parse(rendered.trim());
             
             // It's a valid JSON array, which would be proper in frontmatter
             yamlRepresentation = `---\nfield: ${JSON.stringify(parsedArray)}\n---`;
             yamlBehaviorExplanation = 'This template produces a valid JSON array that will be properly parsed as an array in frontmatter.';
-        } catch (e) {
+        } catch {
             // It's not valid JSON, warn the user
             yamlRepresentation = `---\nfield: "${rendered.trim()}"\n---`;
             yamlBehaviorExplanation = 'This looks like an array but is not valid JSON. The template needs to include commas between items. It will be treated as a regular string.';

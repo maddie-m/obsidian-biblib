@@ -36,7 +36,7 @@ export default class BibliographyPlugin extends Plugin {
         this.commandRegistry.registerCommands();
 
         // Initialize Zotero connector manager if needed
-        this.initializeZoteroConnector();
+        void this.initializeZoteroConnector();
 
         // Add settings tab
         this.addSettingTab(new BibliographySettingTab(this.app, this));

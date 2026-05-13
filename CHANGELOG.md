@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 See [unreleased.md](docs/releases/unreleased.md) for upcoming changes.
 
+## [1.8.1] - 2026-05-13
+
+### Changed
+
+- Added the official Obsidian plugin ESLint checks and fixed the codebase so the full rule set passes without disabled or weakened rules.
+- Raised the minimum Obsidian version to 1.6.6 to match the plugin APIs used by BibLib.
+- Marked the plugin as desktop-only to reflect its current connector and local-file functionality.
+
+### Fixed
+
+- Auto-fill section now displays correctly on Android mobile by replacing the native details element with a custom collapsible.
+- BibTeX export now preserves citation keys from literature note frontmatter.
+- Whitespace-only Zotero keys now fall back to generated citekeys instead of producing an empty citekey.
+
 ## [1.7.2] - 2025-07-02
 
 ### Fixed
@@ -95,7 +109,8 @@ See [unreleased.md](docs/releases/unreleased.md) for upcoming changes.
 
 - Template preview component (replaced by template playground)
 
-[Unreleased]: https://github.com/callumalpass/obsidian-biblib/compare/1.7.2...HEAD
+[Unreleased]: https://github.com/callumalpass/obsidian-biblib/compare/1.8.1...HEAD
+[1.8.1]: https://github.com/callumalpass/obsidian-biblib/compare/1.8.0...1.8.1
 [1.7.2]: https://github.com/callumalpass/obsidian-biblib/compare/1.7.1...1.7.2
 [1.7.1]: https://github.com/callumalpass/obsidian-biblib/compare/1.7.0...1.7.1
 [1.7.0]: https://github.com/callumalpass/obsidian-biblib/compare/1.6.4...1.7.0

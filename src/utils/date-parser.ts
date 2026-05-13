@@ -1,4 +1,5 @@
 import { CslDate, ParsedDate } from '../types/citation';
+import { formatUnknown } from './type-guards';
 
 /**
  * Unified date parsing utility for consistent handling across the plugin.
@@ -41,7 +42,7 @@ export class DateParser {
             }
 
             // Check for object with 'raw' property
-            if ('raw' in input && typeof (input as { raw: unknown }).raw === 'string') {
+            if ('raw' in input && typeof (input).raw === 'string') {
                 const raw = (input as { raw: string }).raw;
                 if (this.isCurrentMarker(raw)) {
                     return this.getCurrentDate();
@@ -51,14 +52,13 @@ export class DateParser {
 
             // Check for CURRENT_DATE object patterns
             if ('CURRENT_DATE' in input ||
-                (input as object).constructor?.name === 'CURRENT_DATE' ||
-                String(input).includes('CURRENT_DATE')) {
+                (input).constructor?.name === 'CURRENT_DATE') {
                 return this.getCurrentDate();
             }
         }
 
         // Fallback: try to convert to string
-        const str = String(input);
+        const str = formatUnknown(input);
         if (str && str !== '[object Object]') {
             return this.parseString(str);
         }

@@ -12,6 +12,7 @@
  */
 import Cite from 'citation-js';
 import '@citation-js/plugin-bibtex';
+import { Citation } from '../../types/citation';
 
 // Configure citation-js to preserve citation keys with special characters
 // (mirrors the configuration in bibliography-builder.ts)
@@ -22,7 +23,7 @@ bibtexConfig.format.checkLabel = false;
  * Helper function that mimics the preprocessing done in BibliographyBuilder.exportBibTeX()
  * This copies the `id` field to `citation-key` to preserve citation keys in BibTeX output.
  */
-function preprocessForBibTeX(data: Record<string, any>): Record<string, any> {
+function preprocessForBibTeX(data: Citation): Citation & { 'citation-key'?: string } {
     const processedData = { ...data };
     if (processedData.id) {
         processedData['citation-key'] = processedData.id;
@@ -32,7 +33,7 @@ function preprocessForBibTeX(data: Record<string, any>): Record<string, any> {
 
 describe('BibTeX export citation key preservation (issue #29)', () => {
     it('exported BibTeX should use the original citation key from the id field', () => {
-        const frontmatterData = {
+        const frontmatterData: Citation = {
             id: 'mycustomkey2023',
             type: 'article-journal',
             title: 'A Study on Machine Learning',
@@ -49,7 +50,7 @@ describe('BibTeX export citation key preservation (issue #29)', () => {
     });
 
     it('multiple entries should each preserve their original keys', () => {
-        const entries = [
+        const entries: Citation[] = [
             {
                 id: 'jones-attention-2024',
                 type: 'article-journal',
@@ -75,7 +76,7 @@ describe('BibTeX export citation key preservation (issue #29)', () => {
 
     it('keys with special but Pandoc-valid characters should be preserved', () => {
         // Pandoc citekeys can contain alphanumerics and: _ : . # $ % & - + ? < > ~ /
-        const frontmatterData = {
+        const frontmatterData: Citation = {
             id: 'smith:2023-ml',
             type: 'article-journal',
             title: 'Machine Learning',

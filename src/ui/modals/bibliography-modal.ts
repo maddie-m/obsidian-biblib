@@ -2,7 +2,7 @@ import { App, Notice, Setting, ButtonComponent } from 'obsidian';
 import { NoteSuggestModal } from './note-suggest-modal';
 import { BaseBibliographyModal } from './base-bibliography-modal';
 import { BibliographyPluginSettings } from '../../types/settings';
-import { Contributor, AdditionalField, Citation, AttachmentData, AttachmentType } from '../../types/citation';
+import { Citation, AttachmentData, AttachmentType } from '../../types/citation';
 import { CitoidService } from '../../services/api/citoid';
 import { CitationService } from '../../services/citation-service';
 import { CitekeyGenerator } from '../../utils/citekey-generator';
@@ -12,8 +12,56 @@ import {
     ERROR_MESSAGES,
     SUCCESS_MESSAGES,
     UI_TEXT,
-    NOTICE_DURATION_SHORT
 } from '../../constants';
+import {
+    asRecordArray,
+    formatUnknown,
+    getString,
+    getStringOrNumber,
+    isRecord,
+    UnknownRecord,
+} from '../../utils/type-guards';
+
+const getFormString = (record: UnknownRecord, key: string): string => {
+    const value = getStringOrNumber(record, key);
+    return value === undefined ? '' : String(value);
+};
+
+const formatDateForInput = (value: unknown): string => {
+    if (typeof value === 'string') return value;
+    if (!isRecord(value)) return '';
+
+    const rawParts = value['date-parts'];
+    if (!Array.isArray(rawParts) || !Array.isArray(rawParts[0])) return '';
+
+    const parts = rawParts[0].filter((part): part is string | number =>
+        typeof part === 'string' || typeof part === 'number'
+    );
+    if (parts.length === 0) return '';
+
+    let dateString = String(parts[0]);
+    if (parts[1] !== undefined) {
+        dateString += `-${String(parts[1]).padStart(2, '0')}`;
+        if (parts[2] !== undefined) {
+            dateString += `-${String(parts[2]).padStart(2, '0')}`;
+        }
+    }
+    return dateString;
+};
+
+const assignLegacyDateFields = (
+    citation: Citation,
+    dateParts: { year: string | number; month?: string | number; day?: string | number }
+): void => {
+    const writableCitation = citation as Record<string, unknown>;
+    writableCitation['year'] = dateParts.year;
+    if (dateParts.month !== undefined) {
+        writableCitation['month'] = dateParts.month;
+    }
+    if (dateParts.day !== undefined) {
+        writableCitation['day'] = dateParts.day;
+    }
+};
 
 export class BibliographyModal extends BaseBibliographyModal {
     // Additional services specific to this modal
@@ -109,13 +157,13 @@ export class BibliographyModal extends BaseBibliographyModal {
                     autofillContainer.removeClass('is-open');
                     const content = autofillContainer.querySelector('.bibliography-autofill-content') as HTMLElement;
                     if (content) {
-                        content.style.display = 'none';
+                        content.addClass('is-collapsed');
                     }
 
                     // Add a notice next to the toggle if not already there
                     const header = autofillContainer.querySelector('.bibliography-autofill-header');
                     if (header && !header.querySelector('.bibliography-zotero-notice')) {
-                        const noticeEl = document.createElement('span');
+                        const noticeEl = activeDocument.createElement('span');
                         noticeEl.className = 'bibliography-zotero-notice';
                         noticeEl.textContent = ' (Zotero data loaded)';
                         header.appendChild(noticeEl);
@@ -138,7 +186,7 @@ export class BibliographyModal extends BaseBibliographyModal {
 
         // Header (clickable toggle)
         const header = container.createDiv({ cls: 'bibliography-autofill-header' });
-        const arrow = header.createSpan({ cls: 'bibliography-autofill-arrow' });
+        header.createSpan({ cls: 'bibliography-autofill-arrow' });
         header.createSpan({ text: 'Auto-fill from identifier or BibTeX' });
         if (this.attachmentData.length > 0 && this.attachmentData[0].type === AttachmentType.IMPORT) {
             header.createSpan({ cls: 'bibliography-zotero-notice', text: ' (Zotero data loaded)' });
@@ -151,7 +199,7 @@ export class BibliographyModal extends BaseBibliographyModal {
         if (shouldBeOpen) {
             container.addClass('is-open');
         } else {
-            citoidContent.style.display = 'none';
+            citoidContent.addClass('is-collapsed');
         }
 
         // Toggle handler
@@ -159,19 +207,19 @@ export class BibliographyModal extends BaseBibliographyModal {
             const isOpen = container.hasClass('is-open');
             if (isOpen) {
                 container.removeClass('is-open');
-                citoidContent.style.display = 'none';
+                citoidContent.addClass('is-collapsed');
             } else {
                 container.addClass('is-open');
-                citoidContent.style.display = 'block';
+                citoidContent.removeClass('is-collapsed');
             }
         });
 
         // Identifier lookup
         new Setting(citoidContent)
             .setName('Lookup by identifier')
-            .setDesc('DOI, ISBN, arXiv ID, URL, PubMed, PMC, Wikidata QIDs')
+            .setDesc('Doi, isbn, arxiv ID, URL, pubmed, pmc, wikidata qids')
             .addText(text => {
-                text.setPlaceholder('e.g., 10.1038/nrn3241');
+	                text.setPlaceholder('E.g., 10.1038/nrn3241');
                 text.inputEl.addClass('bibliography-identifier-input');
             })
             .addButton(button => {
@@ -206,8 +254,8 @@ export class BibliographyModal extends BaseBibliographyModal {
 
         // BibTeX paste
         const bibtexSetting = new Setting(citoidContent)
-            .setName('Paste BibTeX')
-            .setDesc('Parse a BibTeX entry to fill the form');
+            .setName('Paste bibtex')
+            .setDesc('Parse a bibtex entry to fill the form');
 
         const bibtexInput = bibtexSetting.controlEl.createEl('textarea', {
             placeholder: 'Paste BibTeX here...',
@@ -234,7 +282,7 @@ export class BibliographyModal extends BaseBibliographyModal {
                     }
                     this.populateFormFromCitoid(normalizedData);
                     new Notice(SUCCESS_MESSAGES.BIBTEX_PARSED);
-                } catch (error) {
+                } catch {
                     new Notice(ERROR_MESSAGES.BIBTEX_PARSE_FAILED);
                 } finally {
                     button.setDisabled(false);
@@ -291,7 +339,9 @@ export class BibliographyModal extends BaseBibliographyModal {
                 const commonTypes = ['article-journal', 'book', 'chapter', 'paper-conference', 'report', 'thesis', 'webpage'];
                 const commonLabels = ['Journal article', 'Book', 'Book chapter', 'Conference paper', 'Report', 'Thesis', 'Web page'];
 
-                commonTypes.forEach((type, i) => dropdown.addOption(type, commonLabels[i]));
+                commonTypes.forEach((type, i) => {
+                    dropdown.addOption(type, commonLabels[i]);
+                });
                 dropdown.addOption('divider1', '------------------');
 
                 [...CSL_TYPES].filter(t => !commonTypes.includes(t)).sort().forEach(type => {
@@ -325,8 +375,8 @@ export class BibliographyModal extends BaseBibliographyModal {
             .addText(t => { this.containerTitleInput = t.inputEl; t.inputEl.addClass('bibliography-input-full'); });
 
         // Date
-        new Setting(container).setName('Date').setDesc('Publication date (YYYY, YYYY-MM, or YYYY-MM-DD)')
-            .addText(t => { this.dateInput = t.inputEl; t.setPlaceholder('e.g., 2024, 2024-03, 2024-03-15'); });
+        new Setting(container).setName('Date').setDesc('Publication date (yyyy, yyyy-mm, or yyyy-mm-dd)')
+            .addText(t => { this.dateInput = t.inputEl; t.setPlaceholder('E.g., 2024, 2024-03, 2024-03-15'); });
 
         // Publisher
         new Setting(container).setName('Publisher').setDesc('Name of publisher')
@@ -344,8 +394,8 @@ export class BibliographyModal extends BaseBibliographyModal {
         new Setting(container).setName('Volume').setDesc('Volume number')
             .addText(t => { this.volumeInput = t.inputEl; });
 
-        // Number/Issue
-        new Setting(container).setName('Number/Issue').setDesc('Issue or number identifier')
+        // Number/issue
+        new Setting(container).setName('Number/issue').setDesc('Issue or number identifier')
             .addText(t => { this.numberInput = t.inputEl; });
 
         // Language
@@ -378,7 +428,7 @@ export class BibliographyModal extends BaseBibliographyModal {
             });
 
         // DOI
-        new Setting(container).setName('DOI').setDesc('Digital Object Identifier')
+        new Setting(container).setName('DOI').setDesc('Digital object identifier')
             .addText(t => { this.doiInput = t.inputEl; });
 
         // Abstract
@@ -451,94 +501,101 @@ export class BibliographyModal extends BaseBibliographyModal {
         const submitBtn = new ButtonComponent(btnContainer)
             .setButtonText('Create note')
             .setCta()
-            .onClick(async () => {
-                const citation = this.getFormValues();
-                if (!this.validateForm(citation)) return;
+            .onClick(() => {
+                void (async () => {
+                    const citation = this.getFormValues();
+                    if (!this.validateForm(citation)) return;
 
-                submitBtn.setDisabled(true);
-                submitBtn.setButtonText('Creating...');
-                await this.handleSubmit(citation);
+                    submitBtn.setDisabled(true);
+                    submitBtn.setButtonText('Creating...');
+                    await this.handleSubmit(citation);
+                })();
             });
     }
 
     /**
      * Populate form fields from CSL data (e.g., from Citoid or Zotero)
      */
-    public populateFormFromCitoid(cslData: any): void {
+    public populateFormFromCitoid(cslData: unknown): void {
         // Only proceed if we have form elements initialized
         if (!this.isInitialized) {
             console.warn('Cannot populate form before it is initialized');
             return;
         }
+
+        if (!isRecord(cslData)) {
+            console.warn('Cannot populate form from invalid CSL data');
+            return;
+        }
         
         try {
             // ID field - use cslData.id but allow changing
-            if (cslData.id) {
-                this.idInput.value = cslData.id;
+            const id = getString(cslData, 'id');
+            if (id) {
+                this.idInput.value = id;
             }
             
             // Auto-generate ID if not present but we have author and year
-            if (!cslData.id && (cslData.author || cslData.issued)) {
+            if (!id && (cslData.author || cslData.issued)) {
                 const citekey = CitekeyGenerator.generate(cslData, this.settings.citekeyOptions);
                 this.idInput.value = citekey;
             }
             
             // Type dropdown - find closest match to CSL type
-            if (cslData.type) {
+            const cslType = getString(cslData, 'type');
+            if (cslType) {
                 // Set dropdown value if the type exists in options
-                const typeOption = this.typeDropdown.querySelector(`option[value="${cslData.type}"]`);
+                const typeOption = this.typeDropdown.querySelector(`option[value="${cslType}"]`);
                 if (typeOption) {
-                    this.typeDropdown.value = cslData.type;
+                    this.typeDropdown.value = cslType;
                 } else {
                     // Default to article-journal if type not found
                     this.typeDropdown.value = 'article-journal';
-                    console.warn(`CSL type "${cslData.type}" not found in dropdown options`);
+                    console.warn(`CSL type "${cslType}" not found in dropdown options`);
                 }
             }
             
             // Basic text fields - simple mapping
-            this.titleInput.value = cslData.title || '';
-            this.titleShortInput.value = cslData['title-short'] || cslData.shortTitle || '';
-            this.pageInput.value = cslData.page || '';
-            this.urlInput.value = cslData.URL || '';
-            this.containerTitleInput.value = cslData['container-title'] || cslData.journal || '';
-            this.publisherInput.value = cslData.publisher || '';
-            this.publisherPlaceInput.value = cslData['publisher-place'] || '';
-            this.volumeInput.value = cslData.volume || '';
-            this.numberInput.value = cslData.number || cslData.issue || '';
-            this.doiInput.value = cslData.DOI || '';
-            this.abstractInput.value = cslData.abstract || '';
-            this.editionInput.value = cslData.edition || '';
+            this.titleInput.value = getFormString(cslData, 'title');
+            this.titleShortInput.value = getFormString(cslData, 'title-short') || getFormString(cslData, 'shortTitle');
+            this.pageInput.value = getFormString(cslData, 'page');
+            this.urlInput.value = getFormString(cslData, 'URL');
+            this.containerTitleInput.value = getFormString(cslData, 'container-title') || getFormString(cslData, 'journal');
+            this.publisherInput.value = getFormString(cslData, 'publisher');
+            this.publisherPlaceInput.value = getFormString(cslData, 'publisher-place');
+            this.volumeInput.value = getFormString(cslData, 'volume');
+            this.numberInput.value = getFormString(cslData, 'number') || getFormString(cslData, 'issue');
+            this.doiInput.value = getFormString(cslData, 'DOI');
+            this.abstractInput.value = getFormString(cslData, 'abstract');
+            this.editionInput.value = getFormString(cslData, 'edition');
             
             // Date field - build partial date string (YYYY, YYYY-MM, or YYYY-MM-DD)
-            if (cslData.issued && cslData.issued['date-parts'] &&
-                cslData.issued['date-parts'][0] && cslData.issued['date-parts'][0].length > 0) {
-                const dateParts = cslData.issued['date-parts'][0];
-                let dateStr = String(dateParts[0]);
-                if (dateParts[1]) {
-                    dateStr += `-${String(dateParts[1]).padStart(2, '0')}`;
-                    if (dateParts[2]) {
-                        dateStr += `-${String(dateParts[2]).padStart(2, '0')}`;
+            const issuedDate = formatDateForInput(cslData.issued);
+            if (issuedDate) {
+                this.dateInput.value = issuedDate;
+            } else {
+                const year = getStringOrNumber(cslData, 'year');
+                if (year !== undefined) {
+                    let dateStr = String(year);
+                    const month = getStringOrNumber(cslData, 'month');
+                    if (month !== undefined) {
+                        dateStr += `-${String(month).padStart(2, '0')}`;
+                        const day = getStringOrNumber(cslData, 'day');
+                        if (day !== undefined) {
+                            dateStr += `-${String(day).padStart(2, '0')}`;
+                        }
                     }
+                    this.dateInput.value = dateStr;
                 }
-                this.dateInput.value = dateStr;
-            } else if (cslData.year) {
-                let dateStr = String(cslData.year);
-                if (cslData.month) {
-                    dateStr += `-${String(cslData.month).padStart(2, '0')}`;
-                    if (cslData.day) {
-                        dateStr += `-${String(cslData.day).padStart(2, '0')}`;
-                    }
-                }
-                this.dateInput.value = dateStr;
             }
             
             // Language dropdown
-            if (cslData.language) {
+            const language = getString(cslData, 'language');
+            if (language) {
                 // Try to match language code or set to "other"
-                const langOption = this.languageDropdown.querySelector(`option[value="${cslData.language}"]`);
+                const langOption = this.languageDropdown.querySelector(`option[value="${language}"]`);
                 if (langOption) {
-                    this.languageDropdown.value = cslData.language;
+                    this.languageDropdown.value = language;
                 } else {
                     this.languageDropdown.value = 'other';
                 }
@@ -553,11 +610,17 @@ export class BibliographyModal extends BaseBibliographyModal {
             
             let hasContributors = false;
             contributorTypes.forEach(role => {
-                if (cslData[role] && Array.isArray(cslData[role])) {
+                const people = asRecordArray(cslData[role]);
+                if (people.length > 0) {
                     hasContributors = true;
-                    cslData[role].forEach((person: any) => {
+                    people.forEach((person) => {
                         // Create field in UI
-                        this.addContributorField(role, person.family, person.given, person.literal);
+                        this.addContributorField(
+                            role,
+                            getString(person, 'family'),
+                            getString(person, 'given'),
+                            getString(person, 'literal')
+                        );
                     });
                 }
             });
@@ -580,22 +643,9 @@ export class BibliographyModal extends BaseBibliographyModal {
                         inputEl.checked = !!value;
                     } else if (inputEl instanceof HTMLInputElement && inputEl.type === 'date') {
                         // Handle CSL date format
-                        let dateString = '';
-                        if (typeof value === 'string') {
-                            dateString = value;
-                        } else if (value && typeof value === 'object' && 'date-parts' in value && value['date-parts'][0]) {
-                            const parts = value['date-parts'][0];
-                            if (parts.length >= 3) {
-                                dateString = `${parts[0]}-${parts[1].toString().padStart(2, '0')}-${parts[2].toString().padStart(2, '0')}`;
-                            } else if (parts.length >= 2) {
-                                dateString = `${parts[0]}-${parts[1].toString().padStart(2, '0')}-01`;
-                            } else if (parts.length >= 1) {
-                                dateString = `${parts[0]}-01-01`;
-                            }
-                        }
-                        inputEl.value = dateString;
-                    } else if (inputEl instanceof HTMLSelectElement || inputEl instanceof HTMLTextAreaElement || inputEl instanceof HTMLInputElement) {
-                        inputEl.value = value.toString();
+                        inputEl.value = formatDateForInput(value);
+                    } else if (inputEl instanceof HTMLSelectElement || inputEl instanceof HTMLTextAreaElement || inputEl.instanceOf(HTMLInputElement)) {
+                        inputEl.value = formatUnknown(value);
                     }
                 }
             });
@@ -619,12 +669,8 @@ export class BibliographyModal extends BaseBibliographyModal {
             });
             
             // Add remaining fields as additional fields
-            let hasAdditionalFields = false;
-            
             for (const [key, value] of Object.entries(cslData)) {
                 if (!excludedFields.has(key) && value !== undefined && value !== null) {
-                    hasAdditionalFields = true;
-                    
                     // Determine field type
                     let fieldType = 'standard';
                     if (typeof value === 'number') {
@@ -692,23 +738,8 @@ export class BibliographyModal extends BaseBibliographyModal {
                         
                         // Handle CSL date format for default value
                         if (fieldConfig.defaultValue) {
-                            let dateString = '';
                             const defaultVal = fieldConfig.defaultValue;
-                            
-                            if (typeof defaultVal === 'string') {
-                                dateString = defaultVal;
-                            } else if (typeof defaultVal === 'object' && defaultVal && 'date-parts' in defaultVal) {
-                                const parts = (defaultVal as any)['date-parts'][0];
-                                if (parts && parts.length >= 3) {
-                                    dateString = `${parts[0]}-${parts[1].toString().padStart(2, '0')}-${parts[2].toString().padStart(2, '0')}`;
-                                } else if (parts && parts.length >= 2) {
-                                    dateString = `${parts[0]}-${parts[1].toString().padStart(2, '0')}-01`;
-                                } else if (parts && parts.length >= 1) {
-                                    dateString = `${parts[0]}-01-01`;
-                                }
-                            }
-                            
-                            text.setValue(dateString);
+                            text.setValue(formatDateForInput(defaultVal));
                         }
                         return text;
                     });
@@ -717,7 +748,7 @@ export class BibliographyModal extends BaseBibliographyModal {
                 case 'toggle':
                     setting.addToggle(toggle => {
                         // For toggle, we'll store the checkbox element
-                        inputEl = toggle.toggleEl as any;
+                        inputEl = toggle.toggleEl as HTMLInputElement;
                         if (fieldConfig.defaultValue) toggle.setValue(fieldConfig.defaultValue as boolean);
                         return toggle;
                     });
@@ -797,9 +828,11 @@ export class BibliographyModal extends BaseBibliographyModal {
                 const year = parseInt(dateMatch[1], 10);
                 const month = parseInt(dateMatch[2], 10);
                 const day = parseInt(dateMatch[3], 10);
-                citation.year = year.toString();
-                citation.month = month.toString();
-                citation.day = day.toString();
+                assignLegacyDateFields(citation, {
+                    year: year.toString(),
+                    month: month.toString(),
+                    day: day.toString()
+                });
                 citation.issued = { 'date-parts': [[year, month, day]] };
             } else {
                 // Try year-month (YYYY-MM)
@@ -807,15 +840,17 @@ export class BibliographyModal extends BaseBibliographyModal {
                 if (dateMatch) {
                     const year = parseInt(dateMatch[1], 10);
                     const month = parseInt(dateMatch[2], 10);
-                    citation.year = year.toString();
-                    citation.month = month.toString();
+                    assignLegacyDateFields(citation, {
+                        year: year.toString(),
+                        month: month.toString()
+                    });
                     citation.issued = { 'date-parts': [[year, month]] };
                 } else {
                     // Try year only (YYYY)
                     dateMatch = dateValue.match(/^(\d{4})$/);
                     if (dateMatch) {
                         const year = parseInt(dateMatch[1], 10);
-                        citation.year = year.toString();
+                        assignLegacyDateFields(citation, { year: year.toString() });
                         citation.issued = { 'date-parts': [[year]] };
                     }
                 }
@@ -824,7 +859,7 @@ export class BibliographyModal extends BaseBibliographyModal {
         
         // Add values from user-defined default fields
         this.defaultFieldInputs.forEach((inputEl, fieldName) => {
-            let value: any;
+            let value: unknown;
             
             if (inputEl instanceof HTMLInputElement && inputEl.type === 'checkbox') {
                 value = inputEl.checked;
@@ -846,7 +881,7 @@ export class BibliographyModal extends BaseBibliographyModal {
                         value = { 'raw': dateValue };
                     }
                 }
-            } else if (inputEl instanceof HTMLSelectElement || inputEl instanceof HTMLTextAreaElement || inputEl instanceof HTMLInputElement) {
+            } else if (inputEl instanceof HTMLSelectElement || inputEl instanceof HTMLTextAreaElement || inputEl.instanceOf(HTMLInputElement)) {
                 value = inputEl.value;
             }
             
@@ -918,8 +953,8 @@ export class BibliographyModal extends BaseBibliographyModal {
             console.error('Error creating literature note:', error);
             
             // Re-enable the submit button if it exists
-            const submitButton = this.contentEl.querySelector('.create-button') as HTMLButtonElement | null;
-            if (submitButton) {
+            const submitButton = this.contentEl.querySelector('.create-button');
+            if (submitButton instanceof HTMLButtonElement) {
                 submitButton.disabled = false;
                 submitButton.textContent = 'Create note';
             }

@@ -1,6 +1,6 @@
 import Cite from 'citation-js';
 import '@citation-js/plugin-bibtex';
-import { Citation, CslName, CslDate, ZoteroItem, ZoteroCreator, CreatorInput } from '../types/citation';
+import { Citation, CslName, CslDate, ZoteroItem, ZoteroCreator } from '../types/citation';
 import {
     ZOTERO_TYPES_TO_CSL,
     EXTRA_FIELDS_CSL_MAP,
@@ -13,41 +13,57 @@ import { DateParser } from '../utils/date-parser';
 import { CitoidService } from './api/citoid';
 import { Notice } from 'obsidian';
 import { CitekeyGenerator } from '../utils/citekey-generator'; // Adjust path if needed
+import { CitekeyOptions } from '../types/settings';
+import { CSL_TYPES } from '../utils/csl-variables';
+import { asString, errorMessage, formatUnknown, getString, isRecord } from '../utils/type-guards';
 
 
 // --- Zotero to CSL Mapping Logic (Full Adaptation) ---
 // Type mappings and field mappings are now loaded from src/data/zotero-mappings.json
 
-const mapZoteroCreatorToCsl = (creator: any): { literal: string } | { family: string, given?: string } | undefined => {
-    if (!creator) return undefined;
+type MutableCitation = Partial<Citation> & Record<string, unknown>;
+
+const toCslType = (value: unknown): Citation['type'] => {
+    return typeof value === 'string' && (CSL_TYPES as readonly string[]).includes(value)
+        ? value as Citation['type']
+        : 'document';
+};
+
+const mapZoteroCreatorToCsl = (creator: unknown): { literal: string } | { family: string, given?: string } | undefined => {
+    if (typeof creator === 'string') return { literal: creator };
+    if (!isRecord(creator)) return undefined;
     
     // Handle institutional authors or single-field names
-    if (creator.name) return { literal: creator.name };
+    const name = getString(creator, 'name');
+    if (name) return { literal: name };
     
     // Handle individual authors with first/last names
-    if (creator.lastName || creator.firstName) {
+    const lastName = getString(creator, 'lastName');
+    const firstName = getString(creator, 'firstName');
+    if (lastName || firstName) {
         const cslCreator: { family: string, given?: string } = {
-            family: creator.lastName || "",
+            family: lastName || "",
         };
-        if (creator.firstName) {
-            cslCreator.given = creator.firstName;
+        if (firstName) {
+            cslCreator.given = firstName;
         }
         return cslCreator;
     }
     
     // Handle web-specific author formats
-    if (creator.fullName) return { literal: creator.fullName };
-    if (creator.displayName) return { literal: creator.displayName };
-    if (creator.text) return { literal: creator.text };
+    const fullName = getString(creator, 'fullName');
+    if (fullName) return { literal: fullName };
+    const displayName = getString(creator, 'displayName');
+    if (displayName) return { literal: displayName };
+    const text = getString(creator, 'text');
+    if (text) return { literal: text };
     
     // Try to extract any name-like fields
     for (const field of ['fullName', 'displayName', 'name', 'author', 'text', 'byline']) {
-        if (creator[field]) return { literal: creator[field] };
+        const value = getString(creator, field);
+        if (value) return { literal: value };
     }
-    
-    // Last resort: if creator is just a string
-    if (typeof creator === 'string') return { literal: creator };
-    
+
     return undefined; // Invalid creator structure
 };
 
@@ -63,13 +79,17 @@ const ZOTERO_CONVERTERS: Record<ConverterType, { toTarget: (value: unknown) => u
             if (!creators || !Array.isArray(creators)) return undefined;
             return creators
                 .map(mapZoteroCreatorToCsl)
-                .filter((c): c is NonNullable<typeof c> => c !== undefined) as CslName[];
+                .filter((c): c is NonNullable<typeof c> => c !== undefined);
         }
     },
     TAGS: {
         toTarget: (tags: unknown): string | undefined => {
             if (!tags || !Array.isArray(tags)) return undefined;
-            return tags.length > 0 ? tags.map((tag: { tag: string }) => tag.tag).join(', ') : undefined;
+            const tagNames = tags
+                .filter(isRecord)
+                .map((tag) => getString(tag, 'tag'))
+                .filter((tag): tag is string => Boolean(tag));
+            return tagNames.length > 0 ? tagNames.join(', ') : undefined;
         }
     },
     TYPE: {
@@ -87,7 +107,7 @@ function getConverter(converterType: ConverterType | undefined): ((value: unknow
 
 function parseExtraField(extraString: string | undefined): Record<string, unknown> {
     if (!extraString) return {};
-    const fields: Record<string, any> = {};
+    const fields: Record<string, unknown> = {};
     const lines = extraString.trim().split('\n');
 
     for (const line of lines) {
@@ -101,7 +121,7 @@ function parseExtraField(extraString: string | undefined): Record<string, unknow
             }
 
             // Determine correct key name and case
-            let cslKey;
+            let cslKey: string;
             if (EXTRA_FIELDS_CSL_MAP[key]) {
                 cslKey = EXTRA_FIELDS_CSL_MAP[key];
             } else if (PRESERVE_CASE_FIELDS.includes(key)) {
@@ -136,80 +156,85 @@ function parseExtraField(extraString: string | undefined): Record<string, unknow
 // --- Citation Service Class ---
 export class CitationService {
     private citoid: CitoidService;
-    private citekeyOptions: any;
+    private citekeyOptions: CitekeyOptions;
 
-    constructor(citekeyOptions?: any) {
+    constructor(citekeyOptions?: CitekeyOptions) {
         this.citoid = new CitoidService();
         this.citekeyOptions = citekeyOptions || CitekeyGenerator.defaultOptions;
+    }
+
+    private normalizeCitationData(data: unknown, emptyMessage: string): Citation {
+        const rawEntry: unknown = Array.isArray(data) ? (data as unknown[])[0] : data;
+        if (!isRecord(rawEntry)) {
+            throw new Error(emptyMessage);
+        }
+
+        const entry: MutableCitation = { ...rawEntry };
+        entry.type = toCslType(entry.type);
+
+        const entryId = asString(entry.id);
+        if (!entryId || entryId.trim() === '') {
+            entry.id = CitekeyGenerator.generate(entry, this.citekeyOptions);
+        }
+
+        if (!asString(entry.title)) {
+            entry.title = asString(entry.id) || 'Untitled';
+        }
+
+        return entry as Citation;
     }
 
     /**
      * Fetch normalized CSL-JSON for an identifier (DOI, URL, ISBN) via Citoid (BibTeX)
      */
-    async fetchNormalized(id: string): Promise<any> {
+    async fetchNormalized(id: string): Promise<Citation> {
         try {
             const bibtex = await this.citoid.fetchBibTeX(id);
             const cite = new Cite(bibtex);
-            const jsonString = cite.get({ style: 'csl', type: 'string' });
-            const data = JSON.parse(jsonString);
-            let entry = Array.isArray(data) ? data[0] : data;
-
-            // Post-process entry fetched via BibTeX if needed (e.g., ensure type exists)
-            if (!entry) {
-                 throw new Error("Citoid returned empty or invalid data.");
+            const jsonString = cite.get({ style: 'csl', type: 'string' }) as unknown;
+            if (typeof jsonString !== 'string') {
+                throw new Error('Citoid returned non-string citation data.');
             }
-            entry.type = entry.type || 'document'; // Ensure type exists
-
-
-            // Generate citekey if no ID came from BibTeX or if it looks invalid
-            if (!entry.id || typeof entry.id !== 'string' || entry.id.trim() === '') {
-                entry.id = CitekeyGenerator.generate(entry, this.citekeyOptions);
-            }
+            const data: unknown = JSON.parse(jsonString);
+            const entry = this.normalizeCitationData(data, 'Citoid returned empty or invalid data.');
             // Optionally prefix non-Zotero IDs if desired, e.g.,
             // else { entry.id = `bib_${entry.id}`; }
 
             return entry;
-        } catch (e: any) {
-            console.error(`Error fetching/parsing BibTeX from Citoid for ID [${id}]:`, e);
-            new Notice(`Error fetching citation data for ${id}. ${e.message || ''}`);
-            throw e;
+        } catch (error: unknown) {
+            console.error(`Error fetching/parsing BibTeX from Citoid for ID [${id}]:`, error);
+            new Notice(`Error fetching citation data for ${id}. ${errorMessage(error)}`);
+            throw error;
         }
     }
 
     /**
      * Parse BibTeX string directly using Citation.js
      */
-    parseBibTeX(bibtex: string): any {
+    parseBibTeX(bibtex: string): Citation {
         try {
             const cite = new Cite(bibtex);
-            const jsonString = cite.get({ style: 'csl', type: 'string' });
-            const data = JSON.parse(jsonString);
-            let entry = Array.isArray(data) ? data[0] : data;
-
-            if (!entry) {
-                 throw new Error("Parsed BibTeX resulted in empty data.");
+            const jsonString = cite.get({ style: 'csl', type: 'string' }) as unknown;
+            if (typeof jsonString !== 'string') {
+                throw new Error('BibTeX parser returned non-string citation data.');
             }
-            entry.type = entry.type || 'document'; // Ensure type exists
-
-            // Generate citekey if needed
-            if (!entry.id || typeof entry.id !== 'string' || entry.id.trim() === '') {
-                entry.id = CitekeyGenerator.generate(entry, this.citekeyOptions);
-            }
+            const data: unknown = JSON.parse(jsonString);
+            const entry = this.normalizeCitationData(data, 'Parsed BibTeX resulted in empty data.');
              // Optionally prefix non-Zotero IDs if desired
 
             return entry;
-        } catch (e: any) {
-            console.error('Error parsing BibTeX:', e);
-            new Notice(`Error parsing BibTeX. ${e.message || ''}`);
-            throw e;
+        } catch (error: unknown) {
+            console.error('Error parsing BibTeX:', error);
+            new Notice(`Error parsing BibTeX. ${errorMessage(error)}`);
+            throw error;
         }
     }
 
     /**
      * Parse Zotero JSON data using the robust custom mapping.
      */
-    parseZoteroItem(zoteroItem: any): any {
-        if (!zoteroItem || typeof zoteroItem !== 'object') {
+    parseZoteroItem(zoteroItem: ZoteroItem): Citation {
+        if (!isRecord(zoteroItem)) {
             console.error('Invalid Zotero item provided:', zoteroItem);
             new Notice('Cannot process invalid Zotero item data.');
             throw new Error('Invalid Zotero item provided.');
@@ -245,11 +270,12 @@ export class CitationService {
             // --- Citekey Handling ---
             let generatedCitekey = false;
             // Prefer Zotero key if configured and available
-            if (cslData._zoteroKey && this.citekeyOptions.useZoteroKeys) {
-                cslData.id = cslData._zoteroKey;
+            const zoteroKey = asString(cslData._zoteroKey);
+            if (zoteroKey && this.citekeyOptions.useZoteroKeys) {
+                cslData.id = zoteroKey;
             } else {
                 // Generate if no ID exists after mapping OR if ID came from Zotero key but we DON'T want it
-                 if (!cslData.id || cslData.id === cslData._zoteroKey) {
+                 if (!cslData.id || cslData.id === zoteroKey) {
                     cslData.id = CitekeyGenerator.generate(cslData, this.citekeyOptions);
                     generatedCitekey = true;
                  }
@@ -264,8 +290,9 @@ export class CitationService {
 
 
             // --- Optional: Integrate "Extra" field post-processing ---
-            if (cslData._extraFieldContent) {
-                const extraCslFields = parseExtraField(cslData._extraFieldContent);
+            const extraFieldContent = asString(cslData._extraFieldContent);
+            if (extraFieldContent) {
+                const extraCslFields = parseExtraField(extraFieldContent);
                 // Merge extra fields. Be careful about overwriting crucial fields like 'type' or 'id'
                 // unless specifically intended by the 'extra' field content.
                 for (const key in extraCslFields) {
@@ -273,7 +300,7 @@ export class CitationService {
                          cslData[key] = extraCslFields[key];
                     } else if (key === 'type' && extraCslFields[key]) {
                          // Allow type override from extra if valid CSL type? Risky.
-                         console.warn(`Type override attempted via 'extra' field: ${extraCslFields[key]}`);
+                         console.warn(`Type override attempted via 'extra' field: ${formatUnknown(extraCslFields[key])}`);
                          // cslData[key] = extraCslFields[key]; // Uncomment cautiously
                     }
                 }
@@ -290,42 +317,42 @@ export class CitationService {
              }
 
 
-            return cslData;
+            if (!asString(cslData.title)) {
+                cslData.title = asString(zoteroItem.title) || asString(cslData.id) || 'Untitled';
+            }
 
-        } catch (e: any) {
-            console.error('Error mapping Zotero item to CSL:', e);
+            return cslData as Citation;
+
+        } catch (error: unknown) {
+            console.error('Error mapping Zotero item to CSL:', error);
             console.error('Problematic Zotero Item:', JSON.stringify(zoteroItem, null, 2)); // Log item for debugging
 
             // Minimal Fallback: Try Citation.js internal parsing (often less accurate for Zotero)
              try {
                 console.warn("Falling back to Citation.js internal parsing for Zotero data (may be inaccurate).");
                 const cite = new Cite([zoteroItem], { forceType: '@zotero/json' }); // Hint type if possible
-                const jsonString = cite.get({ style: 'csl', type: 'string' });
-                const data = JSON.parse(jsonString);
-                let entry = Array.isArray(data) ? data[0] : data;
-
-                if (!entry) {
-                    throw new Error("Citation.js fallback resulted in empty data.");
+                const jsonString = cite.get({ style: 'csl', type: 'string' }) as unknown;
+                if (typeof jsonString !== 'string') {
+                    throw new Error('Citation.js fallback returned non-string citation data.');
                 }
-
-                 // Ensure type exists
-                entry.type = entry.type || 'document';
+	                const data: unknown = JSON.parse(jsonString);
+	                const entry = this.normalizeCitationData(data, 'Citation.js fallback resulted in empty data.');
 
                  // Handle ID from fallback
-                if (!entry.id || typeof entry.id !== 'string' || entry.id.trim() === '') {
-                    entry.id = CitekeyGenerator.generate(entry, this.citekeyOptions);
-                } else if (entry.id === zoteroItem.key && !this.citekeyOptions.useZoteroKeys){
+	                if (!entry.id || typeof entry.id !== 'string' || entry.id.trim() === '') {
+	                    entry.id = CitekeyGenerator.generate(entry, this.citekeyOptions);
+	                } else if (entry.id === zoteroItem.key && !this.citekeyOptions.useZoteroKeys){
                     // Regenerate if ID came from Zotero key but we don't want it
                     entry.id = CitekeyGenerator.generate(entry, this.citekeyOptions);
                 }
 
                 return entry;
-             } catch(fallbackError: any) {
-                console.error('Citation.js fallback also failed:', fallbackError);
-                new Notice(`Error processing Zotero data: ${e.message || 'Mapping failed'}. Fallback failed.`);
-                // Decide whether to throw original error or fallback error
-                throw e; // Re-throw the original mapping error as it's likely more informative
-             }
+	             } catch(fallbackError: unknown) {
+	                console.error('Citation.js fallback also failed:', fallbackError);
+	                new Notice(`Error processing Zotero data: ${errorMessage(error)}. Fallback failed.`);
+	                // Decide whether to throw original error or fallback error
+	                throw error; // Re-throw the original mapping error as it's likely more informative
+	             }
         }
     }
 
@@ -333,16 +360,16 @@ export class CitationService {
     /**
      * Robustly map Zotero item data to CSL-JSON format using detailed rules.
      */
-    private mapZoteroToCslRobust(item: any): Record<string, any> {
-        const csl: Record<string, any> = {};
+    private mapZoteroToCslRobust(item: ZoteroItem): MutableCitation {
+        const csl: MutableCitation = {};
 
         // 1. Determine Target CSL Type (needed for conditional mapping)
-        const targetType = ZOTERO_TYPES_TO_CSL[item.itemType] || 'document';
+        const targetType = toCslType(ZOTERO_TYPES_TO_CSL[item.itemType]);
         // Set type early, might be overridden by 'extra' field later if allowed
         csl.type = targetType;
         
         // Direct handling for accessDate special cases (CURREN, CURRENT, CURRENT_DATE)
-        const isTodayDate = (val: any): boolean => {
+        const isTodayDate = (val: unknown): boolean => {
             if (!val) return false;
             
             // String checks
@@ -351,16 +378,16 @@ export class CitationService {
             }
             
             // Object checks
-            if (typeof val === 'object' && val !== null) {
+            if (isRecord(val)) {
                 // Check raw property
                 if ('raw' in val && typeof val.raw === 'string') {
                     return val.raw === "CURREN" || val.raw === "CURRENT" || val.raw === "CURRENT_DATE";
                 }
                 
                 // Check for CURRENT_DATE object/property
-                return 'CURRENT_DATE' in val || 
-                       val.constructor?.name === 'CURRENT_DATE' || 
-                       String(val).includes('CURRENT_DATE') ||
+                const constructorName = typeof val.constructor === 'function' ? val.constructor.name : '';
+                return 'CURRENT_DATE' in val ||
+                       constructorName === 'CURRENT_DATE' ||
                        Object.prototype.toString.call(val) === '[object CURRENT_DATE]';
             }
             
@@ -376,10 +403,10 @@ export class CitationService {
         }
 
         // 2. Prepare Source Data (Group creators for easy access by Zotero field name)
-        const sourceData: Record<string, any> = { ...item }; // Shallow copy item
-        const creatorsBySourceField: Record<string, any[]> = {};
+        const sourceData: Record<string, unknown> = { ...item }; // Shallow copy item
+        const creatorsBySourceField: Record<string, unknown[]> = {};
         if (item.creators && Array.isArray(item.creators)) {
-            item.creators.forEach((creator: any) => {
+            item.creators.forEach((creator: ZoteroCreator) => {
                 // Use the specific Zotero creatorType field name (e.g., 'author', 'editor', 'bookAuthor')
                 const creatorSourceField = creator.creatorType;
                 if (creatorSourceField && typeof creatorSourceField === 'string') {
@@ -415,7 +442,7 @@ export class CitationService {
                 else if (item.creators && Array.isArray(item.creators) && item.creators.length) {
                     // Process creators array differently than the default approach
                     for (const creator of item.creators) {
-                        const field = creator.creatorType || 'author';
+	                const field = creator.creatorType || 'author';
                         if (!creatorsBySourceField[field]) {
                             creatorsBySourceField[field] = [];
                         }
@@ -482,16 +509,17 @@ export class CitationService {
 
         // 4. Post-processing and Fallbacks within the robust mapper
         // Example: Ensure 'issued' exists if only 'year' was provided directly in Zotero data
-        if (!csl.issued && item.year) {
-             const yearNum = parseInt(item.year, 10);
-             if (!isNaN(yearNum)) {
-                 csl.issued = { 'date-parts': [[yearNum]] };
-             }
+        const year = item.year;
+        if (!csl.issued && year !== undefined) {
+            const yearNum = typeof year === 'number' ? year : parseInt(year, 10);
+            if (!isNaN(yearNum)) {
+                csl.issued = { 'date-parts': [[yearNum]] };
+            }
         }
         // Example: If CSL type is 'song' but no 'author' mapped, try mapping 'performer' to 'author' as a fallback
-        if (csl.type === 'song' && !csl.author && csl.performer) {
-             csl.author = csl.performer;
-             // Optionally delete csl.performer if you only want one primary creator role listed
+        if (csl.type === 'song' && !csl.author && Array.isArray(csl.performer)) {
+            csl.author = csl.performer.filter(isRecord);
+            // Optionally delete csl.performer if you only want one primary creator role listed
         }
         // Add more specific post-processing rules as needed
 
@@ -507,8 +535,8 @@ export class CitationService {
         
         // Special handling for accessed date - ensure it has proper date-parts structure
         if (csl.accessed) {
-            const isCurrentDateFormat = (val: any): boolean => {
-                if (typeof val !== 'object' || val === null) return false;
+            const isCurrentDateFormat = (val: unknown): boolean => {
+	                if (!isRecord(val)) return false;
                 
                 // Check for raw property with current date value
                 if ('raw' in val && typeof val.raw === 'string') {
@@ -516,9 +544,9 @@ export class CitationService {
                 }
                 
                 // Check for CURRENT_DATE object or property
-                return 'CURRENT_DATE' in val || 
-                       val.constructor?.name === 'CURRENT_DATE' || 
-                       String(val).includes('CURRENT_DATE') ||
+                const constructorName = typeof val.constructor === 'function' ? val.constructor.name : '';
+                return 'CURRENT_DATE' in val ||
+                       constructorName === 'CURRENT_DATE' ||
                        Object.prototype.toString.call(val) === '[object CURRENT_DATE]';
             };
             

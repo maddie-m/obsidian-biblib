@@ -1,8 +1,10 @@
-import { App, Notice, TFile, Vault, normalizePath } from 'obsidian';
+import { App, Notice, TFile, normalizePath } from 'obsidian';
 import { BibliographyPluginSettings, parseLiteratureNoteTags } from '../types';
 import Cite from 'citation-js';
 import '@citation-js/plugin-bibtex';
 import { AttachmentManagerService } from './attachment-manager-service';
+import { getString, isRecord, UnknownRecord } from '../utils/type-guards';
+import { Citation } from '../types/citation';
 
 // Configure citation-js to preserve citation keys with special characters
 // (e.g., hyphens, colons) instead of regenerating them
@@ -16,7 +18,7 @@ interface LiteratureNote {
     /** The file containing the literature note */
     file: TFile;
     /** Parsed frontmatter data (CSL-JSON format) */
-    frontmatter: any;
+    frontmatter: UnknownRecord;
 }
 
 /**
@@ -93,7 +95,7 @@ export class BibliographyBuilder {
             await this.createCitekeyList(literatureNotes);
             await this.createBibliographyJson(literatureNotes);
             new Notice(`Bibliography files created/updated with ${literatureNotes.length} entries.`);
-        } catch (error) {
+        } catch {
              // Errors are logged within the creation functions
              // Notice is shown within the creation functions
         }
@@ -129,10 +131,10 @@ export class BibliographyBuilder {
             try {
                 // Retrieve cached metadata - this is very fast as it's already parsed
                 const cache = this.app.metadataCache.getFileCache(file);
-                const frontmatter = cache?.frontmatter;
+                const frontmatter: unknown = cache?.frontmatter;
 
                 // Skip files without frontmatter
-                if (!frontmatter) {
+                if (!isRecord(frontmatter)) {
                     continue;
                 }
 
@@ -150,7 +152,7 @@ export class BibliographyBuilder {
                 }
 
                 // Ensure the note has a valid citekey (id field)
-                if (!frontmatter.id) {
+                if (!getString(frontmatter, 'id')) {
                     console.warn(`Literature note ${file.path} is missing 'id' field, skipping`);
                     continue;
                 }
@@ -195,7 +197,8 @@ export class BibliographyBuilder {
     private async createCitekeyList(literatureNotes: LiteratureNote[]): Promise<void> {
         // Extract citation keys (the ID field from each note)
         const citationKeys = literatureNotes
-            .map(note => note.frontmatter.id)
+            .map(note => getString(note.frontmatter, 'id'))
+            .filter((id): id is string => Boolean(id))
             .sort(); // ID is already validated in findLiteratureNotes
         
         // Create a plaintext file with just the keys
@@ -278,11 +281,9 @@ export class BibliographyBuilder {
         const bibliographyData = literatureNotes.map(note => {
             // Extract the relevant data from frontmatter
             // We only need fields relevant for bibliography generation, not all metadata
-            const { 
-                position, // Remove Obsidian-specific metadata
-                tags, // Keep tags? Maybe configurable?
-                 ...cslData // Keep the rest which should be mostly CSL compatible
-            } = note.frontmatter;
+            const cslData = { ...note.frontmatter };
+            delete cslData.position;
+            delete cslData.tags;
             
             // Add file path for reference
             return { 
@@ -341,7 +342,7 @@ export class BibliographyBuilder {
     async exportBibTeX(): Promise<void> {
         const literatureNotes = await this.findLiteratureNotes();
         if (literatureNotes.length === 0) {
-            new Notice('No literature notes found to export BibTeX.');
+            new Notice('No literature notes found to export bibtex.');
             return;
         }
         try {
@@ -352,13 +353,11 @@ export class BibliographyBuilder {
                 // Fix for empty date-parts arrays in date fields
                 const dateFields = ['issued', 'accessed', 'container', 'event-date', 'original-date', 'submitted'];
                 for (const field of dateFields) {
-                    if (processedData[field] && 
-                        typeof processedData[field] === 'object' && 
-                        processedData[field]['date-parts'] && 
-                        Array.isArray(processedData[field]['date-parts'])) {
+                    const dateValue = processedData[field];
+                    if (isRecord(dateValue) && Array.isArray(dateValue['date-parts'])) {
                         
                         // Check if date-parts contains empty arrays or has no valid date information
-                        const dateParts = processedData[field]['date-parts'];
+                        const dateParts = dateValue['date-parts'];
                         
                         // More robust checking for valid date-parts structure
                         let isValid = false;
@@ -367,7 +366,7 @@ export class BibliographyBuilder {
                                 // Check if this part is an array and has valid date components
                                 if (Array.isArray(part) && part.length > 0) {
                                     // Check if at least one component is a valid number
-                                    const hasValidComponent = part.some((component: any) => 
+                                    const hasValidComponent = part.some((component: unknown) => 
                                         component !== null && 
                                         component !== undefined && 
                                         !isNaN(Number(component))
@@ -396,7 +395,10 @@ export class BibliographyBuilder {
                 return processedData;
             });
             
-            const bib = new Cite(dataArray).get({ style: 'bibtex', type: 'string' });
+            const bib = new Cite(dataArray as Citation[]).get({ style: 'bibtex', type: 'string' }) as unknown;
+            if (typeof bib !== 'string') {
+                throw new Error('Citation.js returned non-string bibtex output.');
+            }
             // Use the configured BibTeX file path directly
             let bibtexPath = this.settings.bibtexFilePath;
             bibtexPath = normalizePath(bibtexPath);
@@ -407,10 +409,10 @@ export class BibliographyBuilder {
                 if (existing) await this.attachmentManager.trashFile(existing.path);
                 await this.app.vault.create(bibtexPath, bib);
             }
-            new Notice(`BibTeX file exported to ${bibtexPath}`);
+            new Notice(`Bibtex file exported to ${bibtexPath}`);
         } catch (error) {
             console.error('Error exporting BibTeX file:', error);
-            new Notice('Error exporting BibTeX file. See console for details.');
+            new Notice('Error exporting bibtex file. See console for details.');
         }
     }
 }

@@ -1,11 +1,18 @@
 import { App, Notice, Platform, Plugin, debounce } from 'obsidian';
+import * as fs from 'fs';
 import { BibliographyModal } from '../ui/modals/bibliography-modal';
 import { BibliographyPluginSettings } from '../types/settings';
-import { AttachmentData, AttachmentType } from '../types/citation';
+import { AttachmentData, AttachmentType, Citation, ZoteroItem } from '../types/citation';
 import { ServiceManager } from './service-manager';
+import { asString, errorMessage, isRecord } from '../utils/type-guards';
 
 // Import the TYPE ONLY for type hints, the actual class is loaded dynamically
 import type { ConnectorServer as ConnectorServerType } from '../services/connector-server';
+
+type ConnectorServerConstructor = new (
+    app: App,
+    settings: BibliographyPluginSettings
+) => ConnectorServerType;
 
 /**
  * Manages the Zotero Connector functionality including server management,
@@ -56,8 +63,8 @@ export class ZoteroConnectorManager {
                 await this.startConnectorServer(ConnectorServer);
             }
         } catch (err) {
-            console.error("Failed to load ConnectorServer module:", err);
-            new Notice("Failed to load Zotero Connector feature. Check console for details.");
+            console.error('Failed to load ConnectorServer module:', err);
+            new Notice('Failed to load Zotero connector feature. Check console for details.');
         }
     }
 
@@ -66,40 +73,40 @@ export class ZoteroConnectorManager {
      */
     private registerEventListeners(): void {
         // Main handler for Zotero items
-        const boundItemHandler = this.handleZoteroItemReceived.bind(this);
-        document.addEventListener('zotero-item-received', boundItemHandler);
+        const boundItemHandler: EventListener = (event) => this.handleZoteroItemReceived(event);
+        activeDocument.addEventListener('zotero-item-received', boundItemHandler);
         
         // Additional handler for late-arriving attachments
-        const boundAttachmentHandler = this.handleAdditionalAttachments.bind(this);
-        document.addEventListener('zotero-additional-attachments', boundAttachmentHandler);
+        const boundAttachmentHandler: EventListener = (event) => this.handleAdditionalAttachments(event);
+        activeDocument.addEventListener('zotero-additional-attachments', boundAttachmentHandler);
         
         // Register cleanup using Obsidian's mechanism
         this.plugin.register(() => {
-            document.removeEventListener('zotero-item-received', boundItemHandler);
-            document.removeEventListener('zotero-additional-attachments', boundAttachmentHandler);
+            activeDocument.removeEventListener('zotero-item-received', boundItemHandler);
+            activeDocument.removeEventListener('zotero-additional-attachments', boundAttachmentHandler);
         });
     }
 
     /**
      * Register the toggle command for the Zotero connector
      */
-    private registerToggleCommand(ConnectorServerClass: any): void {
+    private registerToggleCommand(ConnectorServerClass: ConnectorServerConstructor): void {
         this.plugin.addCommand({
             id: 'toggle-zotero-connector',
-            name: 'Toggle Zotero Connector server',
+            name: 'Toggle Zotero connector server',
             callback: async () => {
                 if (this.connectorServer) {
                     this.stopConnectorServer();
                     this.settings.enableZoteroConnector = false;
                     await this.plugin.saveData(this.settings);
-                    new Notice('Zotero Connector server stopped');
+                    new Notice('Zotero connector server stopped');
                 } else {
                     // Pass the dynamically imported class constructor
                     await this.startConnectorServer(ConnectorServerClass);
                     if (this.connectorServer) {
                         this.settings.enableZoteroConnector = true;
                         await this.plugin.saveData(this.settings);
-                        new Notice('Zotero Connector server started');
+                        new Notice('Zotero connector server started');
                     }
                 }
             },
@@ -114,7 +121,7 @@ export class ZoteroConnectorManager {
             this.stopConnectorServer();
             this.settings.enableZoteroConnector = false;
             await this.plugin.saveData(this.settings);
-            new Notice('Zotero Connector server stopped');
+            new Notice('Zotero connector server stopped');
         } else {
             // On desktop, use dynamic import to get the ConnectorServer class
             try {
@@ -123,11 +130,11 @@ export class ZoteroConnectorManager {
                 if (this.connectorServer) {
                     this.settings.enableZoteroConnector = true;
                     await this.plugin.saveData(this.settings);
-                    new Notice('Zotero Connector server started');
+                    new Notice('Zotero connector server started');
                 }
             } catch (error) {
-                console.error("Failed to load ConnectorServer module:", error);
-                new Notice("Failed to load Zotero Connector feature.");
+                console.error('Failed to load ConnectorServer module:', error);
+                new Notice('Failed to load Zotero connector feature.');
             }
         }
     }
@@ -136,7 +143,7 @@ export class ZoteroConnectorManager {
      * Start the Zotero Connector server. Only runs on desktop.
      * Accepts the ConnectorServer class constructor obtained via dynamic import.
      */
-    public async startConnectorServer(ConnectorServerClass?: any): Promise<void> {
+    public async startConnectorServer(ConnectorServerClass?: ConnectorServerConstructor): Promise<void> {
         // Redundant check, but good practice
         if (Platform.isMobile) return;
 
@@ -146,8 +153,8 @@ export class ZoteroConnectorManager {
 
         // Check if the class constructor was provided (it should be on desktop)
         if (!ConnectorServerClass) {
-            console.error("ConnectorServer class was not provided to startConnectorServer. Cannot start.");
-            new Notice("Internal error: Failed to initialize Zotero Connector.");
+            console.error('ConnectorServer class was not provided to startConnectorServer. Cannot start.');
+            new Notice('Internal error: Failed to initialize Zotero connector.');
             return;
         }
 
@@ -162,14 +169,14 @@ export class ZoteroConnectorManager {
                 this.serviceManager.getStatusBarService().setConnectorServer(this.connectorServer);
             } else {
                 // This case should ideally not happen if instantiation succeeded
-                console.error("ConnectorServer instance is null immediately after instantiation.");
-                new Notice("Failed to start Zotero Connector: Instance creation error.");
+                console.error('ConnectorServer instance is null immediately after instantiation.');
+                new Notice('Failed to start Zotero connector: Instance creation error.');
                 // Ensure it remains null if something went wrong during instantiation
                 this.connectorServer = null;
             }
-        } catch (error: any) { // Explicitly type error
+        } catch (error: unknown) {
             console.error('Failed to start connector server:', error);
-            new Notice(`Failed to start Zotero Connector server: ${error.message}`);
+            new Notice(`Failed to start Zotero connector server: ${errorMessage(error)}`);
             this.connectorServer = null; // Reset on failure
             // Update status bar after failure
             this.serviceManager.getStatusBarService().setConnectorServer(null);
@@ -182,7 +189,7 @@ export class ZoteroConnectorManager {
     public stopConnectorServer(): void {
         if (this.connectorServer) {
             try {
-                this.connectorServer.stop(); // Call stop on the instance
+                void this.connectorServer.stop(); // Call stop on the instance
                 this.connectorServer = null;
                 // Update status bar after stopping
                 this.serviceManager.getStatusBarService().setConnectorServer(null);
@@ -201,15 +208,25 @@ export class ZoteroConnectorManager {
     public initializeStatusBar(): void {
         this.serviceManager.getStatusBarService().addZoteroStatusBarItem(
             this.plugin, 
-            this.toggleZoteroConnector.bind(this)
+            async () => {
+                await this.toggleZoteroConnector();
+            }
         );
     }
 
     /**
      * Handle the custom 'zotero-item-received' event dispatched by the ConnectorServer.
      */
-    private handleZoteroItemReceived(event: CustomEvent): void {
-        const { item, files, sessionID } = event.detail;
+    private handleZoteroItemReceived(event: Event): void {
+        if (!(event instanceof CustomEvent) || !isRecord(event.detail)) {
+            new Notice('Invalid Zotero item received');
+            return;
+        }
+
+        const itemPayload = event.detail.item;
+        const item = isRecord(itemPayload) ? itemPayload as ZoteroItem : undefined;
+        const files = Array.isArray(event.detail.files) ? event.detail.files : [];
+        const sessionID = asString(event.detail.sessionID);
 
         if (!item) {
             new Notice('Invalid Zotero item received');
@@ -246,7 +263,7 @@ export class ZoteroConnectorManager {
             
             // Keep the set from growing too large by pruning old entries
             // after 10 minutes or when it exceeds 50 entries
-            setTimeout(() => {
+            window.setTimeout(() => {
                 this.processedSessionIds.delete(sessionID);
             }, 10 * 60 * 1000); // 10 minutes
             
@@ -254,8 +271,10 @@ export class ZoteroConnectorManager {
                 // Remove the oldest entries (first ones added)
                 const iterator = this.processedSessionIds.values();
                 for (let i = 0; i < 10; i++) {
-                    const toDelete = iterator.next().value;
-                    if (toDelete) this.processedSessionIds.delete(toDelete);
+                    const nextSession = iterator.next();
+                    if (!nextSession.done) {
+                        this.processedSessionIds.delete(nextSession.value);
+                    }
                 }
             }
         }
@@ -272,7 +291,7 @@ export class ZoteroConnectorManager {
             }
             
             // Parse the Zotero item using the dedicated service method
-            const cslData = this.serviceManager.getCitationService().parseZoteroItem(item);
+            const cslData: Citation = this.serviceManager.getCitationService().parseZoteroItem(item);
 
             if (!cslData) {
                 // parseZoteroItem should throw on failure, but double-check
@@ -308,7 +327,7 @@ export class ZoteroConnectorManager {
                     new Notice('Zotero data loaded');
                 } catch (modalError) {
                     console.error("Error populating modal:", modalError);
-                    new Notice("Error displaying Zotero data in modal.");
+                    new Notice('Error displaying Zotero data in modal.');
                     modal.close(); // Close the broken modal
                     this.resetZoteroProcessing(); // Make sure to reset processing state
                 }
@@ -333,7 +352,7 @@ export class ZoteroConnectorManager {
     /**
      * Process Zotero attachment files and add them to the modal
      */
-    private processZoteroAttachments(files: any[], modal: BibliographyModal): void {
+    private processZoteroAttachments(files: unknown[], modal: BibliographyModal): void {
         // Process attachments if we have any
         if (!files || !Array.isArray(files) || files.length === 0) {
             return;
@@ -378,7 +397,6 @@ export class ZoteroConnectorManager {
                 }
                 // If 'files' contains paths (requires Node 'fs' on desktop):
                 else if (typeof filePath === 'string' && !Platform.isMobile) {
-                    const fs = require('fs');
                     if (fs.existsSync(filePath)) {
                         const fileName = filePath.split(/[/\\]/).pop() || 'document.pdf';
                         
@@ -387,7 +405,7 @@ export class ZoteroConnectorManager {
                             continue;
                         }
                         
-                        const fileData = fs.readFileSync(filePath);
+                        const fileData = Uint8Array.from(fs.readFileSync(filePath));
                         
                         // Determine MIME type based on extension
                         let mimeType = 'application/octet-stream'; // Default type
@@ -409,7 +427,7 @@ export class ZoteroConnectorManager {
                     }
                 }
             } catch (fileError) {
-                console.error(`Error processing attachment file ${filePath}:`, fileError);
+                console.error(`Error processing attachment file ${String(filePath)}:`, fileError);
                 new Notice(`Error processing Zotero attachment: ${typeof filePath === 'string' ? filePath.split(/[/\\]/).pop() : 'Unknown file'}`);
             }
         }
@@ -424,8 +442,13 @@ export class ZoteroConnectorManager {
      * Handle additional attachments event that arrives after the initial item event
      * This is specifically for slow-loading attachments like PDFs
      */
-    private handleAdditionalAttachments(event: CustomEvent): void {
-        const { itemId, files, sessionID } = event.detail;
+    private handleAdditionalAttachments(event: Event): void {
+        if (!(event instanceof CustomEvent) || !isRecord(event.detail)) {
+            return;
+        }
+
+        const itemId = asString(event.detail.itemId);
+        const files = Array.isArray(event.detail.files) ? event.detail.files : [];
         
         if (!files || !Array.isArray(files) || files.length === 0) {
             return;
@@ -443,7 +466,7 @@ export class ZoteroConnectorManager {
      */
     private resetZoteroProcessing(): void {
         // Use a small timeout to ensure any queued operations complete
-        setTimeout(() => {
+        window.setTimeout(() => {
             this.processingItem = false;
             this.activeZoteroItemId = null;
             this.activeZoteroModal = null;

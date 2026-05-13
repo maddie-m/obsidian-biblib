@@ -4,6 +4,8 @@ import { Citation, Contributor, AdditionalField } from '../types/citation';
 import { TemplateEngine } from '../utils/template-engine';
 import { TemplateVariableBuilderService } from './template-variable-builder-service';
 import { processYamlArray } from '../utils/yaml-utils';
+import { formatUnknown, getStringArray, isRecord } from '../utils/type-guards';
+import { DateParser } from '../utils/date-parser';
 
 /**
  * Input for building a YAML frontmatter
@@ -34,21 +36,25 @@ export class FrontmatterBuilderService {
    */
   async buildYamlFrontmatter(data: FrontmatterInput): Promise<string> {
     try {
-      const { citation, contributors, additionalFields, attachmentPaths, pluginSettings, relatedNotePaths } = data;
-      
-      // Build base frontmatter object from essential citation fields
-      const frontmatter: Record<string, any> = {
-        id: citation.id,
-        type: citation.type,
-        title: citation.title,
-        // Use CSL date format for issued date
-        issued: {
-          'date-parts': [[
-            citation.year ? Number(citation.year) : undefined,
-            citation.month ? Number(citation.month) : undefined,
-            citation.day ? Number(citation.day) : undefined
-          ].filter(v => v !== undefined)], // Filter out undefined parts
-        },
+	      const { citation, contributors, additionalFields, attachmentPaths, pluginSettings, relatedNotePaths } = data;
+	      const dateFields = DateParser.extractFields(citation);
+	      const issued = citation.issued || {
+	        'date-parts': [[
+	          dateFields.year,
+	          dateFields.month,
+	          dateFields.day
+        ].filter(value => value !== '')]
+	      };
+	      const existingTags = getStringArray(citation, 'tags') || [];
+	      const literatureNoteTags = parseLiteratureNoteTags(pluginSettings.literatureNoteTag);
+	      
+	      // Build base frontmatter object from essential citation fields
+	      const frontmatter: Record<string, unknown> = {
+	        id: citation.id,
+	        type: citation.type,
+	        title: citation.title,
+	        // Use CSL date format for issued date
+	        issued,
         // Add standard CSL fields (only if they have values)
         ...(citation['title-short'] && { 'title-short': citation['title-short'] }),
         ...(citation.page && { page: citation.page }),
@@ -69,12 +75,12 @@ export class FrontmatterBuilderService {
         ...(citation.language && { language: citation.language }),
         ...(citation.abstract && { abstract: citation.abstract }),
         
-        // Ensure literature note tags are always present, while preserving any existing tags
-        // Parse the literatureNoteTag setting which may contain multiple comma/space-separated tags
-        tags: citation.tags && Array.isArray(citation.tags)
-          ? [...new Set([...citation.tags, ...parseLiteratureNoteTags(pluginSettings.literatureNoteTag)])]
-          : parseLiteratureNoteTags(pluginSettings.literatureNoteTag)
-      };
+	        // Ensure literature note tags are always present, while preserving any existing tags
+	        // Parse the literatureNoteTag setting which may contain multiple comma/space-separated tags
+	        tags: existingTags.length > 0
+	          ? [...new Set([...existingTags, ...literatureNoteTags])]
+	          : literatureNoteTags
+	      };
       
       // Add contributors to frontmatter, preserving all CSL contributor properties
       this.addContributorsToFrontmatter(frontmatter, contributors);
@@ -106,20 +112,20 @@ export class FrontmatterBuilderService {
    * @param contributors Array of contributors to add
    */
   private addContributorsToFrontmatter(
-    frontmatter: Record<string, any>, 
+    frontmatter: Record<string, unknown>, 
     contributors: Contributor[]
   ): void {
-    contributors.forEach(contributor => {
-      // Only include entries with at least one name or other identifier
-      if (contributor.family || contributor.given || contributor.literal) {
-        if (!frontmatter[contributor.role]) {
-          frontmatter[contributor.role] = [];
-        }
-        // Copy all contributor properties except the role
-        const { role, ...personData } = contributor;
-        frontmatter[contributor.role].push(personData);
-      }
-    });
+	    contributors.forEach(contributor => {
+	      // Only include entries with at least one name or other identifier
+	      if (contributor.family || contributor.given || contributor.literal) {
+	        if (!Array.isArray(frontmatter[contributor.role])) {
+	          frontmatter[contributor.role] = [];
+	        }
+	        // Copy all contributor properties except the role
+	        const { role, ...personData } = contributor;
+	        (frontmatter[role] as Record<string, unknown>[]).push(personData);
+	      }
+	    });
   }
   
   /**
@@ -128,7 +134,7 @@ export class FrontmatterBuilderService {
    * @param additionalFields Array of additional fields to add
    */
   private addAdditionalFieldsToFrontmatter(
-    frontmatter: Record<string, any>, 
+    frontmatter: Record<string, unknown>, 
     additionalFields: AdditionalField[]
   ): void {
     additionalFields.forEach((field) => {
@@ -139,11 +145,12 @@ export class FrontmatterBuilderService {
       
       // For date fields, check if value exists and is not empty
       if (field.type === 'date') {
-        if (field.value == null || 
-            (typeof field.value === 'string' && field.value.trim() === '') ||
-            (typeof field.value === 'object' && (!field.value['date-parts'] || field.value['date-parts'].length === 0))) {
-          return;
-        }
+	        const dateValue = field.value;
+	        if (dateValue == null || 
+	            (typeof field.value === 'string' && field.value.trim() === '') ||
+	            (isRecord(dateValue) && (!Array.isArray(dateValue['date-parts']) || dateValue['date-parts'].length === 0))) {
+	          return;
+	        }
       } else {
         // For non-date fields, check standard empty conditions
         if (field.value == null || field.value === '') {
@@ -156,9 +163,9 @@ export class FrontmatterBuilderService {
       // Format value based on field type
       if (field.type === 'date') {
         // For date type fields, ensure they have the proper CSL date-parts structure
-        if (typeof field.value === 'object' && field.value['date-parts']) {
-          // It's already in CSL format
-          valueToAdd = field.value;
+	        if (isRecord(field.value) && field.value['date-parts']) {
+	          // It's already in CSL format
+	          valueToAdd = field.value;
         } else if (typeof field.value === 'string') {
           // Try parsing date string (YYYY-MM-DD or YYYY)
           const dateParts = field.value.split('-')
@@ -175,7 +182,7 @@ export class FrontmatterBuilderService {
       } else if (field.type === 'number') {
         // Ensure numbers are stored as numbers, not strings
         // Handle various possible value types for conversion to number
-        const stringValue = String(field.value);
+	        const stringValue = formatUnknown(field.value);
         const numValue = parseFloat(stringValue);
         valueToAdd = isNaN(numValue) ? field.value : numValue;
       }
@@ -194,7 +201,7 @@ export class FrontmatterBuilderService {
    * @param pluginSettings Plugin settings containing custom field definitions
    */
   private async processCustomFrontmatterFields(
-    frontmatter: Record<string, any>,
+    frontmatter: Record<string, unknown>,
     citation: Citation,
     contributors: Contributor[],
     attachmentPaths?: string[],
@@ -214,29 +221,31 @@ export class FrontmatterBuilderService {
     );
     
     // Filter to enabled custom fields
-    const enabledFields = pluginSettings.customFrontmatterFields.filter(field => field.enabled);
+	    const enabledFields = pluginSettings.customFrontmatterFields.filter(field => field.enabled);
+	    const pdflinks = Array.isArray(templateVariables.pdflink) ? templateVariables.pdflink : [];
+	    const attachments = Array.isArray(templateVariables.attachments) ? templateVariables.attachments : [];
     
     // Process each enabled custom field
     for (const field of enabledFields) {
-      // Special case handling for attachment fields with direct passthrough
-      if (field.name === 'pdflink' && field.template === '{{pdflink}}') {
-        if (templateVariables.pdflink?.length > 0) {
-          frontmatter[field.name] = templateVariables.pdflink;
-        }
-        continue;
-      }
-      
-      if (field.name === 'attachment' && field.template === '{{attachment}}') {
-        if (templateVariables.attachments?.length > 0) {
-          frontmatter[field.name] = templateVariables.attachments;
-        }
-        continue;
-      }
-      
-      // Skip if field name already exists in frontmatter (don't overwrite standard fields)
-      if (frontmatter.hasOwnProperty(field.name)) {
-        continue;
-      }
+	      // Special case handling for attachment fields with direct passthrough
+	      if (field.name === 'pdflink' && field.template === '{{pdflink}}') {
+	        if (pdflinks.length > 0) {
+	          frontmatter[field.name] = pdflinks;
+	        }
+	        continue;
+	      }
+	      
+	      if (field.name === 'attachment' && field.template === '{{attachment}}') {
+	        if (attachments.length > 0) {
+	          frontmatter[field.name] = attachments;
+	        }
+	        continue;
+	      }
+	      
+	      // Skip if field name already exists in frontmatter (don't overwrite standard fields)
+	      if (Object.prototype.hasOwnProperty.call(frontmatter, field.name)) {
+	        continue;
+	      }
       
       // Determine if this looks like an array/object template
       const isArrayTemplate = field.template.trim().startsWith('[') && 
@@ -257,16 +266,16 @@ export class FrontmatterBuilderService {
           const processedValue = isArrayTemplate ? processYamlArray(renderedValue) : renderedValue;
           
           // Parse as JSON for arrays and objects
-          frontmatter[field.name] = JSON.parse(processedValue);
-        } catch (e) {
+	          frontmatter[field.name] = JSON.parse(processedValue) as unknown;
+	        } catch {
           // Special handling for array templates that should be empty arrays
           if (isArrayTemplate && (renderedValue.trim() === '[]' || renderedValue.trim() === '[ ]')) {
             frontmatter[field.name] = [];
-          } else if (isArrayTemplate && 
-                    (renderedValue.includes('{{pdflink}}') || renderedValue.includes('{{attachment}}')) && 
-                    templateVariables.attachments?.length > 0) {
-            // Handle array template containing attachments
-            frontmatter[field.name] = templateVariables.attachments || [];
+	          } else if (isArrayTemplate && 
+	                    (renderedValue.includes('{{pdflink}}') || renderedValue.includes('{{attachment}}')) && 
+	                    attachments.length > 0) {
+	            // Handle array template containing attachments
+	            frontmatter[field.name] = attachments;
           } else {
             // Use as string if JSON parsing fails and no special case
             frontmatter[field.name] = renderedValue;

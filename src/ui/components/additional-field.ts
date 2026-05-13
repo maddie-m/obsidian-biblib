@@ -7,6 +7,28 @@ import {
   CSL_DATE_FIELDS,
   CSL_ALL_CSL_FIELDS,
 } from '../../utils/csl-variables';
+import { formatUnknown, isRecord } from '../../utils/type-guards';
+
+const dateValueToInput = (value: unknown): string => {
+    if (typeof value === 'string') return value;
+    if (!isRecord(value)) return '';
+
+    const rawDateParts = value['date-parts'];
+    if (!Array.isArray(rawDateParts) || !Array.isArray(rawDateParts[0])) return '';
+
+    const parts = rawDateParts[0].filter((part): part is string | number =>
+        typeof part === 'string' || typeof part === 'number'
+    );
+    if (parts.length === 0) return '';
+
+    if (parts.length >= 3) {
+        return `${parts[0]}-${String(parts[1]).padStart(2, '0')}-${String(parts[2]).padStart(2, '0')}`;
+    }
+    if (parts.length >= 2) {
+        return `${parts[0]}-${String(parts[1]).padStart(2, '0')}-01`;
+    }
+    return `${parts[0]}-01-01`;
+};
 
 export class AdditionalFieldComponent {
     public containerEl: HTMLDivElement; // Parent container for all additional fields
@@ -153,21 +175,7 @@ export class AdditionalFieldComponent {
         // Handle value setting and change events differently for dates
         if (this.field.type === 'date') {
             // Convert CSL date object to date string for display
-            let dateString = '';
-            if (this.field.value) {
-                if (typeof this.field.value === 'string') {
-                    dateString = this.field.value;
-                } else if (this.field.value['date-parts'] && this.field.value['date-parts'][0]) {
-                    const parts = this.field.value['date-parts'][0];
-                    if (parts.length >= 3) {
-                        dateString = `${parts[0]}-${parts[1].toString().padStart(2, '0')}-${parts[2].toString().padStart(2, '0')}`;
-                    } else if (parts.length >= 2) {
-                        dateString = `${parts[0]}-${parts[1].toString().padStart(2, '0')}-01`;
-                    } else if (parts.length >= 1) {
-                        dateString = `${parts[0]}-01-01`;
-                    }
-                }
-            }
+            const dateString = dateValueToInput(this.field.value);
             (valueInput as HTMLInputElement).value = dateString;
             
             // Convert date string to CSL date format when saving
@@ -198,7 +206,7 @@ export class AdditionalFieldComponent {
             valueInput.addEventListener('blur', updateDateValue);
         } else {
             // Standard handling for non-date fields
-            valueInput.value = this.field.value != null ? String(this.field.value) : '';
+            valueInput.value = this.field.value != null ? formatUnknown(this.field.value) : '';
             valueInput.oninput = () => { this.field.value = valueInput.value.trim(); };
             valueInput.onchange = () => { this.field.value = valueInput.value.trim(); };
         }

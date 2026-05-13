@@ -17,9 +17,9 @@ export class TemplateVariableBuilderService {
     contributors: Contributor[], 
     attachmentPaths?: string[],
     relatedNotePaths?: string[]
-  ): Record<string, any> {
+  ): Record<string, unknown> {
     // Start with the basic variable set
-    const variables: Record<string, any> = {
+    const variables: Record<string, unknown> = {
       // Current date and time (useful for templates)
       currentDate: new Date().toISOString().split('T')[0],
       currentTime: new Date().toISOString().split('T')[1].split('.')[0], // HH:MM:SS in ISO format
@@ -109,7 +109,7 @@ export class TemplateVariableBuilderService {
       return '';
     }
     
-    const formattedNames = authors.map(this.formatContributorName).filter(name => !!name);
+    const formattedNames = authors.map(author => this.formatContributorName(author)).filter(name => !!name);
     
     if (formattedNames.length === 0) return '';
     if (formattedNames.length === 1) return formattedNames[0];
@@ -155,8 +155,8 @@ export class TemplateVariableBuilderService {
    * @param contributors List of all contributors
    * @returns Object with arrays of contributors by role with various formatting
    */
-  private buildContributorLists(contributors: Contributor[]): Record<string, any> {
-    const result: Record<string, any> = {};
+  private buildContributorLists(contributors: Contributor[]): Record<string, unknown> {
+    const result: Record<string, unknown> = {};
     
     // Group contributors by role
     const byRole = contributors.reduce((groups, contributor) => {

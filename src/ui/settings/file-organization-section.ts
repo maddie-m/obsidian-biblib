@@ -20,7 +20,7 @@ export function renderFilePathSettings(
             'This path is relative to your vault root. Attachments will be copied here when importing.'
         ))
         .addText(text => text
-            .setPlaceholder('biblib')
+            .setPlaceholder('Biblib')
             .setValue(plugin.settings.attachmentFolderPath)
             .onChange(async (value) => {
                 value = normalizePath(value.trim());

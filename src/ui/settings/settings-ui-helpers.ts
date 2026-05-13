@@ -11,7 +11,7 @@ export class SettingsUIHelpers {
      * Create a document fragment with a callback
      */
     createFragment(callback: (frag: DocumentFragment) => void): DocumentFragment {
-        const fragment = document.createDocumentFragment();
+        const fragment = activeDocument.createDocumentFragment();
         callback(fragment);
         return fragment;
     }
@@ -73,7 +73,7 @@ export class SettingsUIHelpers {
         copyButton.addEventListener('click', () => {
             if (this.plugin.settings) {
                 this.plugin.settings.headerTemplate = template;
-                this.plugin.saveSettings();
+                void this.plugin.saveSettings();
                 new Notice('Template applied successfully!', 2000);
             }
         });
@@ -121,12 +121,12 @@ export class SettingsUIHelpers {
      * Helper method to add explanation text to an existing setting
      */
     addSettingHelpText(settingName: string, helpText: string): void {
-        document.querySelectorAll('.setting-item').forEach(item => {
+        activeDocument.querySelectorAll('.setting-item').forEach(item => {
             const nameEl = item.querySelector('.setting-item-name');
             if (nameEl && nameEl.textContent === settingName) {
                 const descEl = item.querySelector('.setting-item-description');
                 if (descEl) {
-                    const helpEl = document.createElement('div');
+                    const helpEl = activeDocument.createElement('div');
                     helpEl.className = 'setting-helper-text';
                     helpEl.textContent = helpText;
                     descEl.appendChild(helpEl);

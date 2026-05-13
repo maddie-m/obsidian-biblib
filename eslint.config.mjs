@@ -1,42 +1,94 @@
-import eslint from '@eslint/js';
-import tseslint from 'typescript-eslint';
+import { globalIgnores } from 'eslint/config';
+import obsidianmd from 'eslint-plugin-obsidianmd';
+import { PlainTextParser } from 'eslint-plugin-obsidianmd/dist/lib/plainTextParser.js';
 import globals from 'globals';
+import tseslint from 'typescript-eslint';
+
+const officialRecommendedConfig = obsidianmd.configs.recommendedWithLocalesEn.filter(
+    (config) => {
+        if (config.files || !config.rules) {
+            return true;
+        }
+
+        return !Object.keys(config.rules).some((ruleName) =>
+            ruleName.startsWith('obsidianmd/')
+        );
+    }
+);
 
 export default tseslint.config(
-    eslint.configs.recommended,
-    ...tseslint.configs.recommended,
     {
         languageOptions: {
-            ecmaVersion: 2022,
-            sourceType: 'module',
             globals: {
-                ...globals.node,
-                ...globals.browser
+                ...globals.browser,
             },
             parserOptions: {
-                project: './tsconfig.json'
-            }
+                projectService: {
+                    allowDefaultProject: ['eslint.config.mjs', 'manifest.json'],
+                },
+                tsconfigRootDir: import.meta.dirname,
+                extraFileExtensions: ['.json'],
+            },
+        },
+    },
+
+    ...officialRecommendedConfig,
+
+    {
+        files: ['manifest.json'],
+        plugins: {
+            obsidianmd,
+        },
+        languageOptions: {
+            parser: tseslint.parser,
+            parserOptions: {
+                projectService: {
+                    allowDefaultProject: ['manifest.json'],
+                },
+                tsconfigRootDir: import.meta.dirname,
+                extraFileExtensions: ['.json'],
+            },
         },
         rules: {
-            // Match the rules from the original .eslintrc
-            'no-unused-vars': 'off',
-            '@typescript-eslint/no-unused-vars': ['error', { args: 'none' }],
-            '@typescript-eslint/ban-ts-comment': 'off',
-            'no-prototype-builtins': 'off',
-            '@typescript-eslint/no-empty-function': 'off',
-            // Additional recommended rules that were implicitly enabled
-            '@typescript-eslint/no-explicit-any': 'warn'
-        }
+            'obsidianmd/validate-manifest': 'error',
+        },
     },
+
     {
-        // Ignore patterns
-        ignores: [
-            'node_modules/**',
-            'main.js',
-            '*.config.js',
-            '*.config.mjs',
-            'dist/**',
-            'coverage/**'
-        ]
-    }
+        files: ['LICENSE'],
+        plugins: {
+            obsidianmd,
+        },
+        languageOptions: {
+            parser: PlainTextParser,
+        },
+        rules: {
+            'obsidianmd/validate-license': 'error',
+        },
+    },
+
+    globalIgnores([
+        'node_modules',
+        '.obsidian-unpacked',
+        'dist',
+        'coverage',
+        'test-results',
+        'screenshots',
+        'obsidian-developer-docs',
+        'zotero-connectors',
+        'e2e',
+        'e2e-vault',
+        '__mocks__',
+        '.clump',
+        'playwright.config.ts',
+        '**/*.test.ts',
+        '**/*.spec.ts',
+        '**/__tests__/**',
+        'copy-files.mjs',
+        'version-bump.mjs',
+        '*.config.js',
+        '*.config.mjs',
+        'main.js',
+        'versions.json',
+    ]),
 );

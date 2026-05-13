@@ -1,4 +1,4 @@
-import { App, Platform } from 'obsidian';
+import { App, Platform, Plugin } from 'obsidian';
 import type { ConnectorServer } from './connector-server';
 
 export class StatusBarService {
@@ -16,7 +16,7 @@ export class StatusBarService {
      * @param plugin The plugin instance to register the status bar with
      * @param toggleCallback Optional callback function to toggle the server state
      */
-    public addZoteroStatusBarItem(plugin: any, toggleCallback?: () => Promise<void>): void {
+    public addZoteroStatusBarItem(plugin: Plugin, toggleCallback?: () => Promise<void>): void {
         // Create status bar item
         this.statusBarItem = plugin.addStatusBarItem();
         
@@ -39,10 +39,10 @@ export class StatusBarService {
             };
             
             // Add tooltip
-            this.statusBarItem.title = "Click to toggle Zotero Connector server";
+            this.statusBarItem.title = "Click to toggle Zotero connector server";
         } else {
             // On mobile, just show status without click action
-            this.statusBarItem.title = "Zotero Connector status (mobile not supported)";
+            this.statusBarItem.title = "Zotero connector status (mobile not supported)";
         }
     }
     

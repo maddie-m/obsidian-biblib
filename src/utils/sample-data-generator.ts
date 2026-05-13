@@ -1,4 +1,4 @@
-import { Citation, Contributor } from "../types/citation";
+import { asRecordArray, isRecord } from "./type-guards";
 
 /**
  * Generates sample citation data for use in template examples and testing
@@ -12,7 +12,7 @@ export class SampleDataGenerator {
      * 
      * @returns A record containing all sample template variables
      */
-    static getSampleData(): Record<string, any> {
+    static getSampleData(): Record<string, unknown> {
         // Based on TemplateVariableBuilderService.buildVariables()
         return {
             // Basic citation metadata
@@ -97,12 +97,13 @@ export class SampleDataGenerator {
      */
     static getModeSpecificSampleData(
         mode: 'normal' | 'citekey' | 'frontmatter', 
-        baseData?: Record<string, any>
-    ): Record<string, any> {
+        baseData?: Record<string, unknown>
+    ): Record<string, unknown> {
         // Start with the base sample data if not provided
-        const data = baseData ? 
+        const clonedData: unknown = baseData ?
             JSON.parse(JSON.stringify(baseData)) : // Deep copy of provided data
             JSON.parse(JSON.stringify(this.getSampleData())); // Deep copy of default data
+        const data: Record<string, unknown> = isRecord(clonedData) ? clonedData : {};
         
         if (mode === 'frontmatter') {
             // In Frontmatter mode, we want full arrays for authors - don't use the formatted string
@@ -112,8 +113,14 @@ export class SampleDataGenerator {
             // This better emulates how the frontmatter builder processes arrays
             
             // 1. Fix authors variable to use full names instead of the formatted "J. Smith et al."
-            data.authors = data.authors_family.map((family: string, i: number) => {
-                const given = data.authors_given[i];
+            const authorsFamily = Array.isArray(data.authors_family)
+                ? data.authors_family.filter((family): family is string => typeof family === 'string')
+                : [];
+            const authorsGiven = Array.isArray(data.authors_given)
+                ? data.authors_given.filter((given): given is string => typeof given === 'string')
+                : [];
+            data.authors = authorsFamily.map((family, i) => {
+                const given = authorsGiven[i];
                 if (given) return `${given} ${family}`;
                 return family;
             });
@@ -122,7 +129,7 @@ export class SampleDataGenerator {
             
             // The authors_raw array with role property is what's used in the loop
             if (!data.authors_raw) {
-                data.authors_raw = data.author.map((author: any) => {
+                data.authors_raw = asRecordArray(data.author).map((author) => {
                     return {
                         ...author,
                         role: 'author'
@@ -141,9 +148,13 @@ export class SampleDataGenerator {
                     const familyKey = `${role}s_family`;
                     const givenKey = `${role}s_given`;
                     
-                    if (data[familyKey] && Array.isArray(data[familyKey])) {
-                        data[roleKey] = data[familyKey].map((family: string, i: number) => {
-                            const given = data[givenKey]?.[i] || '';
+                    if (Array.isArray(data[familyKey])) {
+                        const roleFamilies = data[familyKey].filter((family): family is string => typeof family === 'string');
+                        const roleGiven = Array.isArray(data[givenKey])
+                            ? data[givenKey].filter((given): given is string => typeof given === 'string')
+                            : [];
+                        data[roleKey] = roleFamilies.map((family, i) => {
+                            const given = roleGiven[i] || '';
                             if (given) return `${given} ${family}`;
                             return family;
                         });
@@ -164,8 +175,10 @@ export class SampleDataGenerator {
             
             // 5. Ensure links are properly formatted
             if (data.linkPaths && Array.isArray(data.linkPaths) && !Array.isArray(data.links)) {
-                data.links = data.linkPaths.map((path: string) => `[[${path}]]`);
-                data.links_string = data.links.join(', ');
+                const linkPaths = data.linkPaths.filter((path): path is string => typeof path === 'string');
+                const links = linkPaths.map((path) => `[[${path}]]`);
+                data.links = links;
+                data.links_string = links.join(', ');
             }
         }
         else if (mode === 'citekey') {

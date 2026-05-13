@@ -59,11 +59,9 @@ export interface CslDateParts {
  * Value can be primitive types, arrays, or CSL date objects.
  */
 export interface AdditionalField {
-    type: 'text' | 'number' | 'date' | 'boolean' | 'list' | 'standard' | string;
+    type: string;
     name: string;
-    // Using any for value to maintain backward compatibility with dynamic property access
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    value: any;
+    value: unknown;
 }
 
 /**
@@ -255,6 +253,7 @@ export interface ZoteroCreator {
     lastName?: string;
     name?: string;
     fieldMode?: number;
+    [key: string]: unknown;
 }
 
 /**
@@ -279,11 +278,14 @@ export interface CreatorInput {
  * Zotero item structure before conversion to CSL
  */
 export interface ZoteroItem {
+    id?: string;
     key?: string;
     itemType: string;
     title?: string;
     creators?: ZoteroCreator[];
+    byline?: string;
     date?: string;
+    year?: string | number;
     accessDate?: string;
     url?: string;
     DOI?: string;
@@ -304,17 +306,20 @@ export interface ZoteroAttachment {
     itemType: 'attachment';
     linkMode?: 'linked_url' | 'imported_file' | 'linked_file';
     contentType?: string;
+    mimeType?: string;
     title?: string;
     url?: string;
     filename?: string;
     path?: string;
+    localPath?: string;
+    charset?: string;
     parentItem?: string;
 }
 
 /**
  * Session item for connector-server with typed attachments
  */
-export interface SessionItem extends Omit<ZoteroItem, 'attachments'> {
+export interface SessionItem extends ZoteroItem {
     attachments?: ZoteroAttachment[];
     id?: string;
 }

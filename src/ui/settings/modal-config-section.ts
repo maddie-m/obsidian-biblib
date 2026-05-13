@@ -3,6 +3,12 @@ import BibliographyPlugin from '../../../main';
 import { CSL_ALL_CSL_FIELDS, CSL_DATE_FIELDS, CSL_NUMBER_FIELDS } from '../../utils/csl-variables';
 import { ModalFieldConfig } from '../../types/settings';
 
+const MODAL_FIELD_TYPES = new Set(['text', 'textarea', 'number', 'date', 'toggle', 'dropdown']);
+
+function toModalFieldType(value: string): ModalFieldConfig['type'] {
+    return MODAL_FIELD_TYPES.has(value) ? value as ModalFieldConfig['type'] : 'text';
+}
+
 /**
  * Renders default modal fields section
  */
@@ -17,7 +23,7 @@ export function renderDefaultModalFieldsSection(
         cls: 'setting-item-description'
     });
 
-    desc.createEl('p', { text: 'Configure which CSL-compliant fields appear as primary inputs in the "Create literature note" modal.' });
+    desc.createEl('p', { text: 'Configure which csl-compliant fields appear as primary inputs in the "create literature note" modal.' });
     desc.createEl('p', { text: 'This is useful for workflows that frequently use specific fields (e.g., archival research needing archive, archive-place, archive_location).' });
 
     const fieldsContainer = containerEl.createDiv({ cls: 'default-modal-fields-container' });
@@ -79,7 +85,8 @@ function detectFieldType(fieldName: string): 'text' | 'textarea' | 'number' | 'd
 function updateFieldNameValidation(fieldName: string, inputEl: HTMLInputElement, warningEl: HTMLElement): void {
     if (!fieldName || fieldName.trim() === '') {
         inputEl.removeClass('field-valid', 'field-invalid');
-        warningEl.style.display = 'none';
+        warningEl.addClass('warning-hidden');
+        warningEl.removeClass('warning-visible');
         return;
     }
 
@@ -88,25 +95,27 @@ function updateFieldNameValidation(fieldName: string, inputEl: HTMLInputElement,
     if (isCSLCompliant) {
         inputEl.removeClass('field-invalid');
         inputEl.addClass('field-valid');
-        warningEl.style.display = 'none';
+        warningEl.addClass('warning-hidden');
+        warningEl.removeClass('warning-visible');
     } else {
         inputEl.removeClass('field-valid');
         inputEl.addClass('field-invalid');
 
         warningEl.empty();
         const callout = warningEl.createDiv({ cls: 'callout callout-warning' });
-        callout.createDiv({ cls: 'callout-title', text: '⚠️ Non-CSL Field' });
+        callout.createDiv({ cls: 'callout-title', text: 'Non-csl field' });
 
         const content = callout.createDiv({ cls: 'callout-content' });
         content.createEl('p').appendText(`"${fieldName}" is not a standard CSL field. Default modal fields should be CSL-compliant to ensure compatibility with bibliography tools. Please choose a field from the dropdown or check the `);
         content.lastElementChild?.createEl('a', {
-            text: 'CSL specification',
+            text: 'Csl specification',
             href: 'https://docs.citationstyles.org/en/stable/specification.html#appendix-iv-variables',
             attr: { target: '_blank' }
         });
         content.lastElementChild?.appendText('.');
 
-        warningEl.style.display = 'block';
+        warningEl.removeClass('warning-hidden');
+        warningEl.addClass('warning-visible');
     }
 }
 
@@ -127,13 +136,13 @@ function addDefaultModalFieldRow(
     let typeDropdown: HTMLSelectElement | null = null;
 
     const fieldNameSetting = new Setting(fieldEl)
-        .setName('CSL field name')
-        .setDesc('The CSL field key (e.g., "archive", "URL")');
+        .setName('Csl field name')
+        .setDesc('The csl field key (e.g., "archive", "URL")');
 
     fieldNameSetting
         .addText(text => {
             fieldNameInput = text.inputEl;
-            text.setPlaceholder('e.g., archive')
+            text.setPlaceholder('E.g., archive')
                 .setValue(field.name)
                 .onChange(async (value) => {
                     const trimmedValue = value.trim();
@@ -158,7 +167,7 @@ function addDefaultModalFieldRow(
             return text;
         })
         .addDropdown(dropdown => {
-            dropdown.addOption('', 'Choose from CSL fields...');
+            dropdown.addOption('', 'Choose from csl fields...');
 
             const sortedCSLFields = Array.from(CSL_ALL_CSL_FIELDS).sort();
             sortedCSLFields.forEach(cslField => {
@@ -190,8 +199,7 @@ function addDefaultModalFieldRow(
         });
 
     warningEl = fieldEl.createDiv({
-        cls: 'modal-field-warning',
-        attr: { style: 'display: none;' }
+        cls: 'modal-field-warning warning-hidden'
     });
 
     if (fieldNameInput && warningEl) {
@@ -202,7 +210,7 @@ function addDefaultModalFieldRow(
         .setName('Display label')
         .setDesc('The label shown in the modal')
         .addText(text => text
-            .setPlaceholder('e.g., Archive Name')
+            .setPlaceholder('E.g., archive name')
             .setValue(field.label)
             .onChange(async (value) => {
                 plugin.settings.defaultModalFields[index].label = value.trim();
@@ -213,17 +221,17 @@ function addDefaultModalFieldRow(
         .setName('Field type')
         .setDesc('The type of input control')
         .addDropdown(dropdown => {
-            typeDropdown = dropdown.selectEl as HTMLSelectElement;
+            typeDropdown = dropdown.selectEl;
             dropdown
                 .addOption('text', 'Text')
-                .addOption('textarea', 'Text Area')
+                .addOption('textarea', 'Text area')
                 .addOption('number', 'Number')
                 .addOption('date', 'Date')
                 .addOption('toggle', 'Toggle')
                 .addOption('dropdown', 'Dropdown')
                 .setValue(field.type)
-                .onChange(async (value: any) => {
-                    plugin.settings.defaultModalFields[index].type = value;
+                .onChange(async (value) => {
+                    plugin.settings.defaultModalFields[index].type = toModalFieldType(value);
                     await plugin.saveSettings();
                     refreshDisplay();
                 });
@@ -235,7 +243,7 @@ function addDefaultModalFieldRow(
         if (field.type !== detectedType) {
             plugin.settings.defaultModalFields[index].type = detectedType;
             (typeDropdown as HTMLSelectElement).value = detectedType;
-            plugin.saveSettings();
+            void plugin.saveSettings();
         }
         (typeDropdown as HTMLSelectElement).disabled = true;
     }

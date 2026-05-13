@@ -1,5 +1,6 @@
 import { Plugin } from 'obsidian';
 import { BibliographyPluginSettings, DEFAULT_SETTINGS } from '../types/settings';
+import { getString, isRecord } from '../utils/type-guards';
 
 /**
  * Manages the loading, saving, and validation of plugin settings
@@ -15,7 +16,7 @@ export class SettingsManager {
      * Load settings from Obsidian data storage
      */
     public async loadSettings(): Promise<BibliographyPluginSettings> {
-        const loadedData = await this.plugin.loadData();
+        const loadedData: unknown = await this.plugin.loadData();
         this.settings = this.migrateAndValidateSettings(loadedData);
         return this.settings;
     }
@@ -62,12 +63,12 @@ export class SettingsManager {
      * Migrate settings from older versions and validate them
      * @param loadedData The data loaded from storage
      */
-    private migrateAndValidateSettings(loadedData: any): BibliographyPluginSettings {
+    private migrateAndValidateSettings(loadedData: unknown): BibliographyPluginSettings {
         // Start with default settings
         const settings = { ...DEFAULT_SETTINGS };
 
         // If no data was loaded, return defaults
-        if (!loadedData) {
+        if (!isRecord(loadedData)) {
             return settings;
         }
 
@@ -80,7 +81,7 @@ export class SettingsManager {
         // Ensure citekeyOptions is properly initialized with defaults
         mergedSettings.citekeyOptions = {
             ...DEFAULT_SETTINGS.citekeyOptions,
-            ...(loadedData.citekeyOptions || {})
+            ...(isRecord(loadedData.citekeyOptions) ? loadedData.citekeyOptions : {})
         };
 
         // Ensure customFrontmatterFields exists and is an array
@@ -101,10 +102,14 @@ export class SettingsManager {
      */
     private migrateFromLegacySettings(
         mergedSettings: BibliographyPluginSettings, 
-        loadedData: any
+        loadedData: unknown
     ): void {
         // Handle migration from legacy citekey settings format
         // (This is just an example - implement actual migrations as needed)
+        if (!isRecord(loadedData)) {
+            return;
+        }
+
         if (loadedData.legacyCitekeyOption !== undefined) {
             // Migrate legacy option to new format
             if (mergedSettings.citekeyOptions) {
@@ -114,8 +119,9 @@ export class SettingsManager {
         }
 
         // Example of migrating from a legacy path setting
-        if (loadedData.oldAttachmentFolder && !loadedData.attachmentFolderPath) {
-            mergedSettings.attachmentFolderPath = loadedData.oldAttachmentFolder;
+        const oldAttachmentFolder = getString(loadedData, 'oldAttachmentFolder');
+        if (oldAttachmentFolder && !loadedData.attachmentFolderPath) {
+            mergedSettings.attachmentFolderPath = oldAttachmentFolder;
         }
     }
 }

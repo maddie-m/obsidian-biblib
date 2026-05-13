@@ -49,6 +49,16 @@
  */
 import { CitekeyOptions } from '../types/settings';
 import { TemplateEngine } from './template-engine';
+import {
+       asRecordArray,
+       asUnknownArray,
+       errorMessage,
+       getNonEmptyString,
+       getRecord,
+       getString,
+       isRecord,
+       UnknownRecord,
+} from './type-guards';
 
 /**
  * Static utility class for generating citation keys.
@@ -105,7 +115,7 @@ export class CitekeyGenerator {
         * // => "li2023456" (random suffix added to meet minimum)
         * ```
         */
-       static generate(citationData: any, options?: CitekeyOptions): string {
+       static generate(citationData: unknown, options?: CitekeyOptions): string {
                // Ensure we have valid options, merging defaults
                const config = {
                        ...CitekeyGenerator.defaultOptions,
@@ -113,18 +123,16 @@ export class CitekeyGenerator {
                };
 
                // Sanitize citationData if it's null or undefined
-               if (!citationData) {
-                       console.error('Cannot generate citekey: citationData is null or undefined.');
+               if (!isRecord(citationData)) {
+                       console.error('Cannot generate citekey: citationData is not an object.');
                        return 'error_no_data';
                }
 
                try {
                        // Priority 1: Use Zotero key if requested and available
-                       const zoteroKey = citationData.key || citationData.id;
+                       const zoteroKey = getNonEmptyString(citationData, 'key') || getNonEmptyString(citationData, 'id');
                        if (config.useZoteroKeys && zoteroKey) {
-                               if (typeof zoteroKey === 'string' && zoteroKey.trim().length > 0) {
-                                       return zoteroKey.trim();
-                               }
+                               return zoteroKey.trim();
                        }
 
                        // Priority 2: Use template if provided
@@ -205,7 +213,7 @@ export class CitekeyGenerator {
        private static convertToMustacheTemplate(template: string): string {
            // Replace [field:mod1:mod2] with {{field|mod1|mod2}}
            return template.replace(/\[([a-zA-Z0-9_]+)((?::[a-zA-Z0-9(),]+)*)\]/g, 
-               (match, field, modifiers) => {
+               (_match: string, field: string, modifiers: string) => {
                    // Handle common citekey field names
                    let mustacheVar = field.toLowerCase();
                    
@@ -289,23 +297,23 @@ export class CitekeyGenerator {
         * // }
         * ```
         */
-       private static prepareCitekeyVariables(citationData: any, config: CitekeyOptions): { [key: string]: any } {
-           const variables: { [key: string]: any } = {
+       private static prepareCitekeyVariables(citationData: UnknownRecord, config: CitekeyOptions): { [key: string]: unknown } {
+           const creatorAuthors = asRecordArray(citationData.creators)
+               .filter((creator) => getString(creator, 'creatorType') === 'author');
+           const variables: { [key: string]: unknown } = {
                // Include the full citation data
                ...citationData,
                
                // Add convenience fields for templates
                author: this.extractAuthorPart(citationData, config),
                year: this.extractYearPart(citationData),
-               title: citationData.title || '',
+               title: getString(citationData, 'title') || '',
                
                // Add processed fields commonly used in citekeys
                shorttitle: this.extractTitlePart(citationData, 3),
                
                // Include authors array for iteration, etc.
-               authors: citationData.author || 
-                       (citationData.creators?.filter((c: any) => c.creatorType === 'author')) || 
-                       [],
+               authors: Array.isArray(citationData.author) ? citationData.author : creatorAuthors,
            };
            
            return variables;
@@ -315,9 +323,9 @@ export class CitekeyGenerator {
         * Extracts the first N significant words from the title.
         * Cleans and lowercases the result.
         */
-       private static extractTitlePart(citationData: any, wordCount: number = 1): string {
-               const title = citationData.title || citationData.Title; // Check common variations
-               if (title && typeof title === 'string') {
+       private static extractTitlePart(citationData: UnknownRecord, wordCount: number = 1): string {
+               const title = getString(citationData, 'title') || getString(citationData, 'Title'); // Check common variations
+               if (title) {
                        // Remove common CSL/HTML tags before splitting
                        const cleanTitle = title.replace(/<[^>]+>/g, '');
                        const titleWords = cleanTitle.split(/\s+/);
@@ -395,17 +403,21 @@ export class CitekeyGenerator {
         * // => "unknown"
         * ```
         */
-       private static extractAuthorPart(citationData: any, config: CitekeyOptions): string {
+       private static extractAuthorPart(citationData: UnknownRecord, _config: CitekeyOptions): string {
                let authorName = '';
-               const authors = citationData.author || citationData.creators?.filter((c: any) => c.creatorType === 'author');
+               const creatorAuthors = asRecordArray(citationData.creators)
+                       .filter((creator) => getString(creator, 'creatorType') === 'author');
+               const authors = Array.isArray(citationData.author) ? citationData.author : creatorAuthors;
 
                if (Array.isArray(authors) && authors.length > 0) {
                        // Prioritize the first author object/string in the array
                        authorName = this.extractLastNameFromAuthor(authors[0]);
-               } else if (citationData.creators && Array.isArray(citationData.creators) && citationData.creators.length > 0) {
+               } else {
                        // Fallback specifically for Zotero 'creators' if 'author' isn't present
-                       const firstCreator = citationData.creators[0];
-                       authorName = this.extractLastNameFromAuthor(firstCreator);
+                       const creators = asRecordArray(citationData.creators);
+                       if (creators.length > 0) {
+                               authorName = this.extractLastNameFromAuthor(creators[0]);
+                       }
                }
 
                if (authorName) {
@@ -423,17 +435,18 @@ export class CitekeyGenerator {
         * Handles CSL JSON { family, given }, { literal }, Zotero { lastName, firstName }, and plain strings.
         * Returns cleaned, lowercase string, or empty string if unable to extract.
         */
-       private static extractLastNameFromAuthor(author: any): string {
+       private static extractLastNameFromAuthor(author: unknown): string {
                if (!author) return '';
 
                let lastName = '';
-               if (typeof author === 'object') {
+               if (isRecord(author)) {
                        // CSL JSON format { family, given } or { literal } or Zotero { lastName, firstName }
-                       lastName = author.family || author.lastName || '';
-                       if (!lastName && author.literal) {
+                       lastName = getString(author, 'family') || getString(author, 'lastName') || '';
+                       const literal = getString(author, 'literal');
+                       if (!lastName && literal) {
                                // For institutional authors (literal), take the first significant part.
                                // Split by common separators, take first non-empty part.
-                               const parts = author.literal.split(/[\s,-.:;()&/]+/).filter(Boolean);
+                               const parts = literal.split(/[\s,-.:;()&/]+/).filter(Boolean);
                                lastName = parts[0] || '';
                        }
                } else if (typeof author === 'string') {
@@ -489,44 +502,55 @@ export class CitekeyGenerator {
         * // => ""
         * ```
         */
-       private static extractYearPart(citationData: any): string {
+       private static extractYearPart(citationData: UnknownRecord): string {
                try {
                        // 1. CSL date-parts (most reliable)
-                       const dateParts = citationData.issued?.['date-parts']?.[0];
-                       if (Array.isArray(dateParts) && dateParts[0]) {
-                               const yearNum = parseInt(dateParts[0].toString(), 10);
+                       const issued = getRecord(citationData, 'issued');
+                       const rawDateParts = issued?.['date-parts'];
+                       const dateParts = asUnknownArray(asUnknownArray(rawDateParts)[0]);
+                       if (dateParts[0]) {
+                               const yearValue = dateParts[0];
+                               const yearNum = typeof yearValue === 'number'
+                                       ? yearValue
+                                       : typeof yearValue === 'string'
+                                               ? parseInt(yearValue, 10)
+                                               : Number.NaN;
                                if (!isNaN(yearNum) && yearNum > 1000 && yearNum < 3000) { // Basic sanity check
                                        return yearNum.toString();
                                }
                        }
 
                        // 2. Direct 'year' field (common in simpler formats or Zotero exports)
-                       if (citationData.year) {
-                               const yearStr = citationData.year.toString();
+                       const year = citationData.year;
+                       if (typeof year === 'string' || typeof year === 'number') {
+                               const yearStr = year.toString();
                                const yearMatch = yearStr.match(/\b(\d{4})\b/);
                                if (yearMatch) return yearMatch[1];
                        }
 
                        // 3. CSL literal date
-                       if (citationData.issued?.literal && typeof citationData.issued.literal === 'string') {
-                               const yearMatch = citationData.issued.literal.match(/\b(\d{4})\b/);
+                       const issuedLiteral = issued ? getString(issued, 'literal') : undefined;
+                       if (issuedLiteral) {
+                               const yearMatch = issuedLiteral.match(/\b(\d{4})\b/);
                                if (yearMatch) return yearMatch[1];
                        }
 
                        // 4. General 'date' field
-                       if (citationData.date && typeof citationData.date === 'string') {
-                               const yearMatch = citationData.date.match(/\b(\d{4})\b/);
+                       const date = getString(citationData, 'date');
+                       if (date) {
+                               const yearMatch = date.match(/\b(\d{4})\b/);
                                if (yearMatch) return yearMatch[1];
                        }
 
                        // 5. Try 'issued' field directly if it's a string
-                       if (citationData.issued && typeof citationData.issued === 'string') {
-                               const yearMatch = citationData.issued.match(/\b(\d{4})\b/);
+                       const issuedString = getString(citationData, 'issued');
+                       if (issuedString) {
+                               const yearMatch = issuedString.match(/\b(\d{4})\b/);
                                if (yearMatch) return yearMatch[1];
                        }
 
-               } catch (e) {
-                       console.warn("Error parsing year from citation data:", e);
+               } catch (error: unknown) {
+                       console.warn("Error parsing year from citation data:", errorMessage(error));
                }
 
                // Fallback: return empty string if no year found

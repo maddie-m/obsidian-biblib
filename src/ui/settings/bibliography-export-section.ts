@@ -35,8 +35,8 @@ export function renderBibliographyBuilderSection(containerEl: HTMLElement, plugi
             }));
 
     new Setting(containerEl)
-        .setName('BibTeX file path')
-        .setDesc('Path where to save the exported BibTeX file (relative to vault)')
+        .setName('Bibtex file path')
+        .setDesc('Path where to save the exported bibtex file (relative to vault)')
         .addText(text => text
             .setPlaceholder('biblib/bibliography.bib')
             .setValue(plugin.settings.bibtexFilePath)

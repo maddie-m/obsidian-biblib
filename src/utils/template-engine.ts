@@ -37,6 +37,7 @@
  * ```
  */
 import { processYamlArray } from './yaml-utils';
+import { formatUnknown, isRecord } from './type-guards';
 
 /**
  * Options for controlling template rendering behavior.
@@ -115,7 +116,7 @@ export class TemplateEngine {
      */
     static render(
         template: string,
-        variables: { [key: string]: any },
+        variables: { [key: string]: unknown },
         options: TemplateOptions = {}
     ): string {
         // Start with the template
@@ -194,27 +195,28 @@ export class TemplateEngine {
      * // => "DOI: 10.1234/example"
      * ```
      */
-    private static processPositiveBlocks(template: string, variables: { [key: string]: any }): string {
+    private static processPositiveBlocks(template: string, variables: { [key: string]: unknown }): string {
         // Regex for positive blocks {{#variable}}content{{/variable}}
         const blockRegex = /\{\{#([^}]+)\}\}(.*?)\{\{\/\1\}\}/gs;
         
-        return template.replace(blockRegex, (match, key, content) => {
+        return template.replace(blockRegex, (_match: string, key: string, content: string) => {
             const trimmedKey = key.trim();
             const value = this.getNestedValue(variables, trimmedKey);
             
             // If the value is an array, iterate over it
             if (Array.isArray(value)) {
-                if (value.length === 0) {
+                const valueArray = value as unknown[];
+                if (valueArray.length === 0) {
                     return ''; // Empty array = don't render
                 }
-                
+	                
                 // Map each item in the array through the template
-                return value.map((item, index) => {
+                return valueArray.map((item, index) => {
                     // For each iteration, create a new variables object
                     // with enhanced metadata about the iteration
                     // If item is an object, spread its properties to make them directly accessible
                     // e.g., {{#authors}}{{family}}{{/authors}} can access author.family directly
-                    const itemProperties = (typeof item === 'object' && item !== null && !Array.isArray(item))
+                    const itemProperties = isRecord(item)
                         ? item
                         : {};
 
@@ -225,10 +227,10 @@ export class TemplateEngine {
                         '@index': index,                         // Current index (0-based)
                         '@number': index + 1,                    // Current number (1-based)
                         '@first': index === 0,                   // Is this the first item?
-                        '@last': index === value.length - 1,     // Is this the last item?
+                        '@last': index === valueArray.length - 1,     // Is this the last item?
                         '@odd': index % 2 === 1,                 // Is this an odd-indexed item?
                         '@even': index % 2 === 0,                // Is this an even-indexed item?
-                        '@length': value.length,                 // Total number of items
+                        '@length': valueArray.length,                 // Total number of items
                     };
                     
                     // Process this iteration's content recursively
@@ -270,11 +272,11 @@ export class TemplateEngine {
      * // => "No DOI available"
      * ```
      */
-    private static processNegativeBlocks(template: string, variables: { [key: string]: any }): string {
+    private static processNegativeBlocks(template: string, variables: { [key: string]: unknown }): string {
         // Regex for negative blocks {{^variable}}content{{/variable}}
         const blockRegex = /\{\{\^([^}]+)\}\}(.*?)\{\{\/\1\}\}/gs;
         
-        return template.replace(blockRegex, (match, key, content) => {
+        return template.replace(blockRegex, (_match: string, key: string, content: string) => {
             const trimmedKey = key.trim();
             const value = this.getNestedValue(variables, trimmedKey);
             
@@ -292,10 +294,10 @@ export class TemplateEngine {
      * Process variable replacements {{variable}} or {{variable|format}}
      * Also supports special case {{rand|N}} or {{randN}} for random strings
      */
-    private static processVariables(template: string, variables: { [key: string]: any }): string {
+    private static processVariables(template: string, variables: { [key: string]: unknown }): string {
         // First, handle the special case of {{rand|N}} or {{randN}}
         // This format doesn't require an actual variable to exist
-        template = template.replace(/\{\{(rand)(?:\|(\d+))?\}\}/g, (match, key, length) => {
+        template = template.replace(/\{\{(rand)(?:\|(\d+))?\}\}/g, (_match: string, _key: string, length: string | undefined) => {
             const len = length ? parseInt(length, 10) : 5;
             return this.generateRandomString(len);
         });
@@ -303,7 +305,7 @@ export class TemplateEngine {
         // Regex for variables, optionally with formats {{variable}} or {{variable|format}}
         const variableRegex = /\{\{([^#^}|]+)(?:\|([^}]+))?\}\}/g;
         
-        return template.replace(variableRegex, (match, key, format) => {
+        return template.replace(variableRegex, (_match: string, key: string, format: string | undefined) => {
             const trimmedKey = key.trim();
             
             // Skip keys that start with # or ^ as those are handled by block processors
@@ -330,13 +332,13 @@ export class TemplateEngine {
             if (typeof value === 'object') {
                 try {
                     return JSON.stringify(value);
-                } catch (e) {
-                    return '[Object]';
-                }
+	                } catch {
+	                    return '[Object]';
+	                }
             }
             
             // Return string value
-            return String(value);
+            return formatUnknown(value);
         });
     }
     
@@ -369,7 +371,7 @@ export class TemplateEngine {
      * // => undefined (array doesn't have index 1)
      * ```
      */
-    private static getNestedValue(obj: { [key: string]: any }, path: string): any {
+    private static getNestedValue(obj: { [key: string]: unknown }, path: string): unknown {
         // Handle direct property access
         if (obj[path] !== undefined) {
             return obj[path];
@@ -377,14 +379,20 @@ export class TemplateEngine {
         
         // Handle dot notation for nested properties
         const parts = path.split('.');
-        let current = obj;
+        let current: unknown = obj;
         
         for (const part of parts) {
             if (current === undefined || current === null) {
                 return undefined;
             }
-            
-            current = current[part];
+
+            if (Array.isArray(current) && /^\d+$/.test(part)) {
+                current = current[Number(part)];
+            } else if (isRecord(current)) {
+                current = current[part];
+            } else {
+                return undefined;
+            }
         }
         
         return current;
@@ -455,7 +463,7 @@ export class TemplateEngine {
      * // => "a and b and c"
      * ```
      */
-    private static formatValue(value: any, format: string): string {
+    private static formatValue(value: unknown, format: string): string {
         // Check for formatters with parameters (e.g. truncate:30)
         const formatParts = format.split(':');
         const formatName = formatParts[0];
@@ -495,17 +503,19 @@ export class TemplateEngine {
                 return stringValue.replace(/(?:^|\s)\S/g, match => match.toUpperCase());
                 
             // Length-based formatters
-            case 'truncate':
+            case 'truncate': {
                 const length = formatArgs.length > 0 ? parseInt(formatArgs[0], 10) : 30;
                 return stringValue.length > length 
                     ? stringValue.substring(0, length) 
                     : stringValue;
-                
-            case 'ellipsis':
+            }
+	                
+            case 'ellipsis': {
                 const maxLength = formatArgs.length > 0 ? parseInt(formatArgs[0], 10) : 30;
                 return stringValue.length > maxLength 
                     ? stringValue.substring(0, maxLength) + '...'
                     : stringValue;
+            }
                 
             // Content manipulation formatters
             case 'replace':
@@ -561,7 +571,7 @@ export class TemplateEngine {
                     return precision !== undefined
                         ? num.toFixed(precision)
                         : num.toString();
-                } catch (e) {
+                } catch {
                     return stringValue;
                 }
                 
@@ -569,7 +579,7 @@ export class TemplateEngine {
             case 'json':
                 try {
                     return JSON.stringify(value);
-                } catch (e) {
+                } catch {
                     return '[Invalid JSON]';
                 }
                 
@@ -582,6 +592,13 @@ export class TemplateEngine {
             // Date formatters  
             case 'date':
                 try {
+                    if (
+                        !(typeof value === 'string' ||
+                          typeof value === 'number' ||
+                          value instanceof Date)
+                    ) {
+                        return '';
+                    }
                     const date = new Date(value);
                     if (formatArgs.length > 0) {
                         // Simple date format patterns
@@ -599,7 +616,7 @@ export class TemplateEngine {
                         if (format === 'day') return date.getDate().toString();
                     }
                     return date.toLocaleDateString();
-                } catch (e) {
+                } catch {
                     return stringValue;
                 }
                 
@@ -646,7 +663,7 @@ export class TemplateEngine {
             case 'urldecode':
                 return decodeURIComponent(stringValue);
                 
-            default:
+            default: {
                 // If format includes a colon but formatter isn't recognized
                 if (formatParts.length > 1) {
                     return stringValue;
@@ -670,6 +687,7 @@ export class TemplateEngine {
                 
                 // If format is not recognized, return value as is
                 return stringValue;
+            }
         }
     }
     

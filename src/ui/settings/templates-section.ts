@@ -17,7 +17,7 @@ export function renderTemplatesSection(
     // Introduction to template system
     const templateIntro = containerEl.createEl('div', { cls: 'setting-item-description' });
     templateIntro.createEl('p', {
-        text: 'BibLib uses a powerful template system across all content. Templates use a Mustache-like syntax for literature notes, filenames, and frontmatter fields.'
+        text: 'Biblib uses a powerful template system across all content. Templates use a mustache-like syntax for literature notes, filenames, and frontmatter fields.'
     });
 
     // Add template guide FIRST
@@ -27,12 +27,12 @@ export function renderTemplatesSection(
     });
 
     new Setting(templateGuideContainer)
-        .setName('Template System Guide')
+        .setName('Template system guide')
         .setHeading();
 
     // Make the guide a collapsible details element (collapsed by default)
     const detailsEl = templateGuideContainer.createEl('details');
-    detailsEl.createEl('summary', { text: 'Template system guide (Click to expand)' });
+    detailsEl.createEl('summary', { text: 'Template system guide (click to expand)' });
     const guideDiv = detailsEl.createEl('div', { cls: 'template-variables-list' });
 
     guideDiv.createEl('p', { text: 'The template system supports variable replacement, formatting options, conditionals, and loops.' });
@@ -77,7 +77,7 @@ export function renderTemplatesSection(
     helpers.createListItem(arrayIssuesUl, 'Use {{^@first}}, {{/@first}} to add commas only between items, not after the last item', '');
 
     guideDiv.createEl('p', {
-        text: 'Use the Template Playground in YAML mode to test your array templates.'
+        text: 'Use the template playground in YAML mode to test your array templates.'
     });
 
     new Setting(guideDiv).setName('Formatting options').setHeading();
@@ -112,7 +112,7 @@ export function renderTemplatesSection(
             text: '{{#authors}}\n  {{@number}}. {{.}}{{^@last}},{{/@last}}{{#@last}}.{{/@last}}\n{{/authors}}'
         });
     });
-    guideDiv.createEl('p', { text: 'Would produce: "1. John Smith, 2. Maria Rodriguez, 3. Wei Zhang."' });
+    guideDiv.createEl('p', { text: 'Would produce: "1. John smith, 2. Maria rodriguez, 3. Wei zhang."' });
 
     new Setting(guideDiv).setName('Accessing nested data').setHeading();
     guideDiv.createEl('p', { text: 'Use dot notation to access nested properties and array items:' });
@@ -124,7 +124,7 @@ export function renderTemplatesSection(
     guideDiv.createEl('p', {}, (p) => {
         p.appendText('See the ');
         p.createEl('a', {
-            text: 'full documentation',
+            text: 'Full documentation',
             href: "https://callumalpass.github.io/obsidian-biblib"
         });
         p.appendText(' for more details on the template system.');
@@ -134,7 +134,7 @@ export function renderTemplatesSection(
     const playgroundContainer = containerEl.createDiv({ cls: 'template-playground-wrapper' });
 
     new Setting(playgroundContainer)
-        .setName('Template Playground')
+        .setName('Template playground')
         .setHeading();
 
     playgroundContainer.createEl('p', {

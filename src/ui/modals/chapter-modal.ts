@@ -1,13 +1,54 @@
-import { App, Notice, Setting, TFile, ButtonComponent } from 'obsidian';
+import { App, Notice, Setting, ButtonComponent } from 'obsidian';
 import { NoteSuggestModal } from './note-suggest-modal';
 import { BaseBibliographyModal } from './base-bibliography-modal';
 import { BibliographyPluginSettings } from '../../types/settings';
-import { Contributor, AdditionalField, Citation, AttachmentData, AttachmentType } from '../../types/citation';
+import { Contributor, AdditionalField, Citation, AttachmentType } from '../../types/citation';
 import { CitekeyGenerator } from '../../utils/citekey-generator';
 import { NoteCreationService, CitationService } from '../../services';
+import {
+    errorMessage,
+    getString,
+    getStringOrNumber,
+    isRecord,
+    UnknownRecord,
+} from '../../utils/type-guards';
 
 // Define type for book entries used in this modal
-type BookEntry = { id: string; title: string; path: string; frontmatter: any };
+type BookEntry = { id: string; title: string; path: string; frontmatter: UnknownRecord };
+
+const contributorsFromValue = (value: unknown, role: string): Contributor[] => {
+    const contributors: Contributor[] = [];
+    const values = Array.isArray(value) ? value : [value];
+
+    for (const item of values) {
+        if (typeof item === 'string' && item.trim()) {
+            contributors.push({ role, family: '', given: '', literal: item.trim() });
+        } else if (isRecord(item)) {
+            contributors.push({
+                role,
+                family: getString(item, 'family') || '',
+                given: getString(item, 'given') || '',
+                literal: getString(item, 'literal') || ''
+            });
+        }
+    }
+
+    return contributors;
+};
+
+const assignLegacyDateFields = (
+    citation: Citation,
+    dateParts: { year: string | number; month?: string | number; day?: string | number }
+): void => {
+    const writableCitation = citation as Record<string, unknown>;
+    writableCitation['year'] = dateParts.year;
+    if (dateParts.month !== undefined) {
+        writableCitation['month'] = dateParts.month;
+    }
+    if (dateParts.day !== undefined) {
+        writableCitation['day'] = dateParts.day;
+    }
+};
 
 export class ChapterModal extends BaseBibliographyModal {
     // Chapter-specific data state
@@ -105,7 +146,7 @@ export class ChapterModal extends BaseBibliographyModal {
                 const parentElement = text.inputEl.parentElement;
                 if (!parentElement) return text;
                 
-                const regenerateButton = new ButtonComponent(parentElement)
+                new ButtonComponent(parentElement)
                     .setIcon('reset')
                     .setTooltip('Regenerate citekey')
                     .onClick(() => {
@@ -207,7 +248,7 @@ export class ChapterModal extends BaseBibliographyModal {
         // DOI field
         new Setting(contentEl)
             .setName('DOI')
-            .setDesc('Digital Object Identifier for this chapter (if available)')
+            .setDesc('Digital object identifier for this chapter (if available)')
             .addText(text => {
                 this.doiInput = text.inputEl;
                 return text;
@@ -328,7 +369,7 @@ export class ChapterModal extends BaseBibliographyModal {
         this.addContributorField('author');
         
         // Add button to add more contributors
-        const addContributorButton = new ButtonComponent(contentEl)
+        new ButtonComponent(contentEl)
             .setButtonText('Add contributor')
             .onClick(() => this.addContributorField('author'));
 
@@ -339,7 +380,7 @@ export class ChapterModal extends BaseBibliographyModal {
         this.additionalFieldsContainer = contentEl.createDiv({ cls: 'bibliography-additional-fields' });
         
         // Add button to add more fields
-        const addFieldButton = new ButtonComponent(contentEl)
+        new ButtonComponent(contentEl)
             .setButtonText('Add field')
             .onClick(() => this.addAdditionalField('', '', 'standard'));
             
@@ -355,7 +396,7 @@ export class ChapterModal extends BaseBibliographyModal {
 
         // Add button to trigger note selection
         relatedNotesSetting.addButton(button => button
-            .setButtonText('Add Related Note')
+            .setButtonText('Add related note')
             .onClick(() => {
                 // Open the Note Suggest Modal
                 new NoteSuggestModal(this.app, (selectedFile) => {
@@ -443,10 +484,10 @@ export class ChapterModal extends BaseBibliographyModal {
         this.updateAttachmentsDisplay(attachmentsDisplayEl); // Initialize display
         
         // Import file input - store references for use with import dialog
-        this.importSettingEl = document.createElement('div');
+        this.importSettingEl = activeDocument.createElement('div');
         
         // Link to existing file - store references for use with link dialog
-        this.linkSettingEl = document.createElement('div');
+        this.linkSettingEl = activeDocument.createElement('div');
     }
 
     /**
@@ -479,60 +520,22 @@ export class ChapterModal extends BaseBibliographyModal {
             
             
             // First, check for editors - they should be added to the chapter regardless of authors
-            let editors: any[] = [];
-            if (fm.editor && Array.isArray(fm.editor)) {
-                editors = fm.editor.map((editor: any) => ({...editor, role: 'editor'}));
-            } 
-            else if (fm.editor && typeof fm.editor === 'object' && !Array.isArray(fm.editor)) {
-                editors = [{...fm.editor, role: 'editor'}];
-            }
-            else if (fm.editor && typeof fm.editor === 'string' && fm.editor.trim()) {
-                editors = [{role: 'editor', literal: fm.editor.trim()}];
-            }
-            
+            const editors = contributorsFromValue(fm.editor, 'editor');
+	            
             // Add all editors found (with proper editor role)
             if (editors.length > 0) {
-                editors.forEach((editor: any) => {
-                    if (typeof editor === 'object') {
-                        // Get properties with proper fallbacks
-                        const family = editor.family || '';
-                        const given = editor.given || '';
-                        const literal = editor.literal || '';
-                        
-                        // Always use 'editor' role for editors
-                        this.addContributorField('editor', family, given, literal);
-                    } else if (typeof editor === 'string' && editor.trim()) {
-                        this.addContributorField('editor', '', '', editor.trim());
-                    }
+                editors.forEach((editor) => {
+                    this.addContributorField('editor', editor.family, editor.given, editor.literal);
                 });
             }
-            
+	            
             // Next, check for book authors to add as container-authors
-            let containerAuthors: any[] = [];
-            if (fm.author && Array.isArray(fm.author)) {
-                containerAuthors = fm.author.map((author: any) => ({...author, role: 'container-author'}));
-            } 
-            else if (fm.author && typeof fm.author === 'object' && !Array.isArray(fm.author)) {
-                containerAuthors = [{...fm.author, role: 'container-author'}];
-            }
-            else if (fm.author && typeof fm.author === 'string' && fm.author.trim()) {
-                containerAuthors = [{role: 'container-author', literal: fm.author.trim()}];
-            }
-            
+            const containerAuthors = contributorsFromValue(fm.author, 'container-author');
+	            
             // Add all container authors found
             if (containerAuthors.length > 0) {
-                containerAuthors.forEach((containerAuthor: any) => {
-                    if (typeof containerAuthor === 'object') {
-                        // Get properties with proper fallbacks
-                        const family = containerAuthor.family || '';
-                        const given = containerAuthor.given || '';
-                        const literal = containerAuthor.literal || '';
-                        
-                        // Add with container-author role
-                        this.addContributorField('container-author', family, given, literal);
-                    } else if (typeof containerAuthor === 'string' && containerAuthor.trim()) {
-                        this.addContributorField('container-author', '', '', containerAuthor.trim());
-                    }
+                containerAuthors.forEach((containerAuthor) => {
+                    this.addContributorField('container-author', containerAuthor.family, containerAuthor.given, containerAuthor.literal);
                 });
             }
             // Book authors are NOT added as chapter authors - they're handled via container-author
@@ -601,7 +604,9 @@ export class ChapterModal extends BaseBibliographyModal {
      * Helper method to extract file path from attachment references
      * Handles various formats including wikilinks [[file.pdf]]
      */
-    private extractPathFromAttachment(attachment: string): string {
+    private extractPathFromAttachment(attachment: unknown): string {
+        if (typeof attachment !== 'string') return '';
+
         // Handle wikilinks format: [[path/to/file.pdf]] or [[path/to/file.pdf|alias]]
         const wikiLinkMatch = attachment.match(/\[\[(.*?)(?:\|.*?)?\]\]/);
         if (wikiLinkMatch && wikiLinkMatch[1]) {
@@ -641,17 +646,17 @@ export class ChapterModal extends BaseBibliographyModal {
             type: 'chapter', // Fixed as chapter type
             title: this.titleInput.value,
             'title-short': this.titleShortInput.value || undefined,
-            'container-title': bookData.title, // Book title
-            publisher: bookData.publisher, // Book publisher
-            'publisher-place': bookData['publisher-place'], // Book publisher place
+            'container-title': getString(bookData, 'title'), // Book title
+            publisher: getString(bookData, 'publisher'), // Book publisher
+            'publisher-place': getString(bookData, 'publisher-place'), // Book publisher place
             page: this.pageInput.value || undefined,
             DOI: this.doiInput.value || undefined,
             abstract: this.abstractInput.value || undefined,
             // Chapter-specific fields we may want to include
             'container-author': this.contributors.filter(c => c.role === 'container-author'), // Book authors as container-author
-            volume: bookData.volume,
-            edition: bookData.edition,
-            isbn: bookData.ISBN,
+            volume: getStringOrNumber(bookData, 'volume'),
+            edition: getStringOrNumber(bookData, 'edition'),
+            isbn: getString(bookData, 'ISBN'),
         };
         
         // Handle date fields - prioritize chapter date if provided, otherwise use book date
@@ -661,13 +666,14 @@ export class ChapterModal extends BaseBibliographyModal {
         
         if (year) {
             // If chapter has its own date info, use that
-            citation.year = year;
+            const legacyDateParts: { year: string; month?: string; day?: string } = { year };
             if (month) {
-                citation.month = month;
+                legacyDateParts.month = month;
                 if (day) {
-                    citation.day = day;
+                    legacyDateParts.day = day;
                 }
             }
+            assignLegacyDateFields(citation, legacyDateParts);
             
             // Build CSL issued field
             citation.issued = {
@@ -675,21 +681,22 @@ export class ChapterModal extends BaseBibliographyModal {
                     year ? Number(year) : undefined,
                     month ? Number(month) : undefined,
                     day ? Number(day) : undefined
-                ].filter(v => v !== undefined) as number[]]
+                ].filter(v => v !== undefined)]
             };
-        } else if (bookData.issued) {
+        } else if (isRecord(bookData.issued)) {
             // Otherwise use the book's date info
             citation.issued = bookData.issued;
-            
+	            
             // Extract simple fields too
-            if (bookData.year) {
-                citation.year = bookData.year;
-            }
-            if (bookData.month) {
-                citation.month = bookData.month;
-            }
-            if (bookData.day) {
-                citation.day = bookData.day;
+            const bookYear = getStringOrNumber(bookData, 'year');
+            const bookMonth = getStringOrNumber(bookData, 'month');
+            const bookDay = getStringOrNumber(bookData, 'day');
+            if (bookYear !== undefined) {
+                assignLegacyDateFields(citation, {
+                    year: bookYear,
+                    month: bookMonth,
+                    day: bookDay
+                });
             }
         }
         
@@ -768,54 +775,15 @@ export class ChapterModal extends BaseBibliographyModal {
                 
                 // Extract contributors from book frontmatter
                 for (const role of roles) {
-                    const contributors = this.selectedBook.frontmatter[role];
-                    if (contributors && Array.isArray(contributors)) {
-                        contributors.forEach((person: any) => {
-                            if (typeof person === 'object') {
-                                // Add as contributor with book role
-                                bookContributors.push({
-                                    role: role,
-                                    family: person.family || '',
-                                    given: person.given || '',
-                                    literal: person.literal || ''
-                                });
-                            } else if (typeof person === 'string' && person.trim()) {
-                                // Handle string-based contributors
-                                bookContributors.push({
-                                    role: role,
-                                    family: '',
-                                    given: '',
-                                    literal: person.trim()
-                                });
-                            }
-                        });
-                    }
+                    bookContributors.push(...contributorsFromValue(this.selectedBook.frontmatter[role], role));
                 }
                 
                 // Check if we need to add book authors
                 // Only add book authors if we don't have chapter authors
                 const hasChapterAuthors = finalUserContributors.some(c => c.role === 'author');
                 
-                if (!hasChapterAuthors && this.selectedBook.frontmatter.author && 
-                    Array.isArray(this.selectedBook.frontmatter.author)) {
-                    
-                    this.selectedBook.frontmatter.author.forEach((person: any) => {
-                        if (typeof person === 'object') {
-                            bookContributors.push({
-                                role: 'author',
-                                family: person.family || '',
-                                given: person.given || '',
-                                literal: person.literal || ''
-                            });
-                        } else if (typeof person === 'string' && person.trim()) {
-                            bookContributors.push({
-                                role: 'author',
-                                family: '',
-                                given: '', 
-                                literal: person.trim()
-                            });
-                        }
-                    });
+                if (!hasChapterAuthors) {
+                    bookContributors.push(...contributorsFromValue(this.selectedBook.frontmatter.author, 'author'));
                 }
             }
             
@@ -856,13 +824,13 @@ export class ChapterModal extends BaseBibliographyModal {
             console.error('Error creating chapter note:', error);
             
             // Re-enable the submit button if it exists
-            const submitButton = this.contentEl.querySelector('.create-button') as HTMLButtonElement | null;
-            if (submitButton) {
+            const submitButton = this.contentEl.querySelector('.create-button');
+            if (submitButton instanceof HTMLButtonElement) {
                 submitButton.disabled = false;
-                submitButton.textContent = 'Create Chapter Note';
+                submitButton.textContent = 'Create chapter note';
             }
-            
-            new Notice(`Error creating chapter note: ${error instanceof Error ? error.message : String(error)}`);
+	            
+            new Notice(`Error creating chapter note: ${errorMessage(error)}`);
         }
     }
 

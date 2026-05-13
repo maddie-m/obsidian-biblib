@@ -1,6 +1,45 @@
-import { App, Modal, Setting, Notice, normalizePath } from 'obsidian';
+import { App, Modal, Setting, Notice } from 'obsidian';
 import { BibliographyPluginSettings } from '../../types/settings';
 import { NoteCreationService, BulkImportSettings } from '../../services/note-creation-service';
+import { errorMessage } from '../../utils/type-guards';
+
+class BulkImportConfirmModal extends Modal {
+    private decided = false;
+
+    constructor(app: App, private onDecision: (confirmed: boolean) => void) {
+        super(app);
+    }
+
+    onOpen(): void {
+        const { contentEl } = this;
+        contentEl.createEl('h2', { text: 'Confirm bulk import' });
+        contentEl.createEl('p', {
+            text: 'This operation may create multiple files in your vault.'
+        });
+
+        new Setting(contentEl)
+            .addButton(button => button
+                .setButtonText('Cancel')
+                .onClick(() => this.decide(false)))
+            .addButton(button => button
+                .setButtonText('Start import')
+                .setCta()
+                .onClick(() => this.decide(true)));
+    }
+
+    onClose(): void {
+        if (!this.decided) {
+            this.onDecision(false);
+        }
+        this.contentEl.empty();
+    }
+
+    private decide(confirmed: boolean): void {
+        this.decided = true;
+        this.onDecision(confirmed);
+        this.close();
+    }
+}
 
 /**
  * Modal for configuring and initiating a bulk import operation
@@ -45,8 +84,8 @@ export class BulkImportModal extends Modal {
         zoteroTipsEl.createEl('h3', { text: 'Importing from Zotero' });
         
         const importSteps = zoteroTipsEl.createEl('ol');
-        importSteps.createEl('li', { text: 'In Zotero, select items and use "Export Items..." (not Better BibTeX)' });
-        importSteps.createEl('li', { text: 'Select format "BibTeX" and check "Export Files"' });
+        importSteps.createEl('li', { text: 'In Zotero, select items and use "export items..." (not better bibtex)' });
+        importSteps.createEl('li', { text: 'Select format "bibtex" and check "export files"' });
         importSteps.createEl('li', { text: 'Save the exported bibliography.bib and files/ folder to your vault' });
         importSteps.createEl('li', { text: 'Select the bibliography.bib file in this dialog' });
         
@@ -57,19 +96,18 @@ export class BulkImportModal extends Modal {
         // File selection
         new Setting(contentEl)
             .setName('Import file')
-            .setDesc('Select a BibTeX (.bib) or CSL-JSON (.json) file to import')
+            .setDesc('Select a bibtex (.bib) or csl-JSON (.JSON) file to import')
             .addButton(button => button
                 .setButtonText('Choose file')
                 .onClick(() => {
                     // Create and trigger an input element to select a file
-                    const input = document.createElement('input');
+                    const input = activeDocument.createElement('input');
                     input.type = 'file';
                     input.accept = '.bib,.json';
                     input.multiple = false;
                     
-                    input.onchange = async (event) => {
-                        // @ts-ignore - files exists on target
-                        const file = event.target.files[0];
+                    input.onchange = () => {
+                        const file = input.files?.[0];
                         if (file) {
                             this.selectedFile = file;
                             this.selectedFileName = file.name;
@@ -88,7 +126,7 @@ export class BulkImportModal extends Modal {
             );
 
         // File info display
-        const fileInfoEl = contentEl.createDiv({ cls: 'file-info', text: 'No file selected' });
+        contentEl.createDiv({ cls: 'file-info', text: 'No file selected' });
 
         // Import settings
         contentEl.createEl('h3', { text: 'Import settings' });
@@ -111,7 +149,7 @@ export class BulkImportModal extends Modal {
         // Annotations/Notes
         new Setting(contentEl)
             .setName('Include annotations')
-            .setDesc('Include content from BibTeX "annote" field in the body of literature notes')
+            .setDesc('Include content from bibtex "annote" field in the body of literature notes')
             .addToggle(toggle => toggle
                 .setValue(this.importSettings.annoteToBody)
                 .onChange(value => {
@@ -163,7 +201,7 @@ export class BulkImportModal extends Modal {
             }
             
             // Confirm before proceeding
-            if (!confirm('Are you sure you want to proceed with the bulk import? This operation may create multiple files in your vault.')) {
+            if (!await this.confirmBulkImport()) {
                 return;
             }
             
@@ -189,7 +227,7 @@ export class BulkImportModal extends Modal {
                     
                     // Look for attachments in a standard Zotero export structure
                     if (this.selectedFile.name === 'bibliography.bib' || this.selectedFile.name.includes('export')) {
-                        new Notice('Tip: If this is a Zotero export, make sure the "files" folder and BibTeX file are both in your vault.', 5000);
+                        new Notice('Tip: If this is a Zotero export, make sure the "files" folder and bibtex file are both in your vault.', 5000);
                     }
                 }
                 
@@ -205,7 +243,7 @@ export class BulkImportModal extends Modal {
                 this.close();
             } catch (error) {
                 console.error('Bulk import failed:', error);
-                new Notice(`Import failed: ${error.message || 'Unknown error'}`);
+                new Notice(`Import failed: ${errorMessage(error)}`);
                 
                 // Re-enable the button
                 importButton.disabled = false;
@@ -233,8 +271,14 @@ export class BulkImportModal extends Modal {
                     reject(new Error("Failed to read file content"));
                 }
             };
-            reader.onerror = (error) => reject(error);
+            reader.onerror = () => reject(new Error(reader.error?.message || 'Failed to read file content'));
             reader.readAsText(file);
+        });
+    }
+
+    private confirmBulkImport(): Promise<boolean> {
+        return new Promise(resolve => {
+            new BulkImportConfirmModal(this.app, resolve).open();
         });
     }
 

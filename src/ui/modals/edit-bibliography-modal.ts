@@ -1,22 +1,18 @@
 import { App, Notice, Setting, TFile, ToggleComponent, stringifyYaml } from 'obsidian';
 import { BibliographyModal } from './bibliography-modal';
 import { BibliographyPluginSettings } from '../../types/settings';
-import { Citation, Contributor, AdditionalField, AttachmentData, AttachmentType } from '../../types/citation';
+import { Citation, AttachmentType } from '../../types/citation';
 import { CitekeyGenerator } from '../../utils/citekey-generator';
 import { TemplateEngine } from '../../utils/template-engine';
 import { processYamlArray } from '../../utils/yaml-utils';
-import {
-    CSL_ALL_CSL_FIELDS,
-    CSL_NAME_FIELDS,
-    CSL_NUMBER_FIELDS,
-    CSL_DATE_FIELDS
-} from '../../utils/csl-variables';
+import { CSL_NAME_FIELDS } from '../../utils/csl-variables';
 import { CitoidService } from '../../services/api/citoid';
 import { NoteCreationService, CitationService, TemplateVariableBuilderService } from '../../services';
+import { asUnknownArray, errorMessage, getString, isRecord, UnknownRecord } from '../../utils/type-guards';
 
 export class EditBibliographyModal extends BibliographyModal {
     private fileToEdit: TFile;
-    private parsedFrontmatter: any;
+    private parsedFrontmatter: UnknownRecord | null = null;
     
     // Regeneration options
     private regenerateCitekeyOnSave: boolean;
@@ -48,7 +44,8 @@ export class EditBibliographyModal extends BibliographyModal {
     onOpen() {
         // Get frontmatter
         const cache = this.app.metadataCache.getCache(this.fileToEdit.path);
-        this.parsedFrontmatter = cache?.frontmatter;
+        const frontmatter: unknown = cache?.frontmatter;
+        this.parsedFrontmatter = isRecord(frontmatter) ? frontmatter : null;
         
         if (!this.parsedFrontmatter) {
             new Notice('No frontmatter found in the selected file');
@@ -91,7 +88,7 @@ export class EditBibliographyModal extends BibliographyModal {
         optionsContainer.createEl('h4', { text: 'Update options' });
         
         // Create a description for the section
-        const optionsDesc = optionsContainer.createEl('p', {
+        optionsContainer.createEl('p', {
             cls: 'setting-item-description',
             text: 'Choose which parts of the note should be updated when saving changes:'
         });
@@ -121,7 +118,7 @@ export class EditBibliographyModal extends BibliographyModal {
             });
 
         // Note body regeneration toggle with warning
-        const bodyRegenerationSetting = new Setting(optionsContainer)
+        new Setting(optionsContainer)
             .setName('Regenerate note body')
             .setDesc('Replace the entire note body with the header template')
             .addToggle(toggle => {
@@ -135,14 +132,15 @@ export class EditBibliographyModal extends BibliographyModal {
 
         // Warning for body regeneration
         const warningEl = optionsContainer.createDiv({
-            cls: 'edit-body-warning',
-            attr: { style: this.regenerateBodyOnSave ? 'display: block;' : 'display: none;' }
+            cls: this.regenerateBodyOnSave
+                ? 'edit-body-warning warning-visible'
+                : 'edit-body-warning warning-hidden'
         });
         
         warningEl.createEl('div', {
             cls: 'callout callout-warning',
         }, (callout) => {
-            callout.createEl('div', { cls: 'callout-title', text: '⚠️ Warning' });
+            callout.createEl('div', { cls: 'callout-title', text: '⚠️ warning' });
             callout.createEl('div', { 
                 cls: 'callout-content', 
                 text: 'Regenerating the note body will replace all content you\'ve added to this note with the header template. This action cannot be undone.' 
@@ -154,15 +152,16 @@ export class EditBibliographyModal extends BibliographyModal {
      * Show/hide body regeneration warning
      */
     private updateBodyWarningVisibility(show: boolean, warningEl: HTMLElement): void {
-        warningEl.style.display = show ? 'block' : 'none';
+        warningEl.toggleClass('warning-visible', show);
+        warningEl.toggleClass('warning-hidden', !show);
     }
 
     /**
      * Populate form from CSL frontmatter
      */
-    private populateFormFromCSLFrontmatter(frontmatter: any): void {
-        const cslData: any = {};
-        const contributors: { [role: string]: any[] } = {};
+    private populateFormFromCSLFrontmatter(frontmatter: UnknownRecord): void {
+        const cslData: Record<string, unknown> = {};
+        const contributors: { [role: string]: unknown[] } = {};
         
         // Process each frontmatter field
         for (const [key, value] of Object.entries(frontmatter)) {
@@ -190,7 +189,7 @@ export class EditBibliographyModal extends BibliographyModal {
             const attachments = frontmatter.attachment || frontmatter.pdflink;
             if (Array.isArray(attachments)) {
                 // Filter to ensure only valid string paths are processed
-                const validPaths = attachments.filter(path =>
+                const validPaths = asUnknownArray(attachments).filter((path): path is string =>
                     typeof path === 'string' && path.trim().length > 0
                 );
                 validPaths.forEach(path => {
@@ -216,7 +215,7 @@ export class EditBibliographyModal extends BibliographyModal {
             const related = frontmatter.related || frontmatter.links;
             if (Array.isArray(related)) {
                 // Filter to ensure only valid string paths are processed
-                this.relatedNotePaths = related.filter(path => 
+                this.relatedNotePaths = asUnknownArray(related).filter((path): path is string =>
                     typeof path === 'string' && path.trim().length > 0
                 );
             } else if (typeof related === 'string' && related.trim().length > 0) {
@@ -260,7 +259,7 @@ export class EditBibliographyModal extends BibliographyModal {
             const existingFrontmatter = this.parsedFrontmatter || {};
             
             // Get current citekey
-            const currentCitekey = existingFrontmatter.id || existingFrontmatter.citekey;
+            const currentCitekey = getString(existingFrontmatter, 'id') || getString(existingFrontmatter, 'citekey');
             let newCitekey: string;
 
             // Generate new citekey if requested, otherwise use the form value
@@ -269,11 +268,11 @@ export class EditBibliographyModal extends BibliographyModal {
                 updatedModalData.citation.id = newCitekey;
             } else {
                 // Use the citekey from the form (may have been manually edited)
-                newCitekey = updatedModalData.citation.id || currentCitekey;
+                newCitekey = updatedModalData.citation.id || currentCitekey || CitekeyGenerator.generate(updatedModalData.citation, this.settings.citekeyOptions);
             }
             
             // Start with existing frontmatter to preserve non-CSL fields
-            const finalFrontmatterOutput: any = { ...existingFrontmatter };
+            const finalFrontmatterOutput: Record<string, unknown> = { ...existingFrontmatter };
             
             // Merge CSL data from modal
             for (const [key, value] of Object.entries(updatedModalData.citation)) {
@@ -283,13 +282,13 @@ export class EditBibliographyModal extends BibliographyModal {
             }
             
             // Merge contributors
-            const contributorsByRole: { [role: string]: any[] } = {};
+            const contributorsByRole: { [role: string]: unknown[] } = {};
             updatedModalData.contributors.forEach(contributor => {
                 if (!contributorsByRole[contributor.role]) {
                     contributorsByRole[contributor.role] = [];
                 }
                 
-                const nameData: any = {};
+                const nameData: Record<string, unknown> = {};
                 if (contributor.family) nameData.family = contributor.family;
                 if (contributor.given) nameData.given = contributor.given;
                 if (contributor.literal) nameData.literal = contributor.literal;
@@ -326,11 +325,11 @@ export class EditBibliographyModal extends BibliographyModal {
                 if (field.type === 'date') {
                     if (field.value == null || 
                         (typeof field.value === 'string' && field.value.trim() === '') ||
-                        (typeof field.value === 'object' && (!field.value['date-parts'] || field.value['date-parts'].length === 0))) {
+                        (isRecord(field.value) && (!Array.isArray(field.value['date-parts']) || field.value['date-parts'].length === 0))) {
                         return;
                     }
                     
-                    if (typeof field.value === 'object' && field.value !== null) {
+                    if (isRecord(field.value)) {
                         // Valid CSL date object
                         finalFrontmatterOutput[field.name] = field.value;
                     } else if (typeof field.value === 'string' && field.value !== '') {
@@ -392,7 +391,7 @@ export class EditBibliographyModal extends BibliographyModal {
             if (this.updateCustomFrontmatterOnSave) {
                 const templateVariableBuilder = new TemplateVariableBuilderService();
                 const templateVariables = templateVariableBuilder.buildVariables(
-                    finalFrontmatterOutput,
+                    finalFrontmatterOutput as Citation,
                     updatedModalData.contributors,
                     updatedModalData.attachmentData.map(a => a.path).filter((p): p is string => p !== undefined),
                     updatedModalData.relatedNotePaths
@@ -403,7 +402,7 @@ export class EditBibliographyModal extends BibliographyModal {
                     if (field.enabled) {
                         try {
                             // Skip if field name already exists in frontmatter (don't overwrite standard fields)
-                            if (finalFrontmatterOutput.hasOwnProperty(field.name)) {
+                            if (Object.prototype.hasOwnProperty.call(finalFrontmatterOutput, field.name)) {
                                 continue;
                             }
                             
@@ -426,8 +425,8 @@ export class EditBibliographyModal extends BibliographyModal {
                                     const processedValue = isArrayTemplate ? processYamlArray(renderedValue) : renderedValue;
                                     
                                     // Parse as JSON for arrays and objects
-                                    finalFrontmatterOutput[field.name] = JSON.parse(processedValue);
-                                } catch (e) {
+                                    finalFrontmatterOutput[field.name] = JSON.parse(processedValue) as unknown;
+                                } catch {
                                     // Special handling for array templates that should be empty arrays
                                     if (isArrayTemplate && (renderedValue.trim() === '[]' || renderedValue.trim() === '[ ]')) {
                                         finalFrontmatterOutput[field.name] = [];
@@ -457,7 +456,7 @@ export class EditBibliographyModal extends BibliographyModal {
                 // Regenerate body from template
                 const templateVariableBuilder = new TemplateVariableBuilderService();
                 const templateVariables = templateVariableBuilder.buildVariables(
-                    finalFrontmatterOutput,
+                    finalFrontmatterOutput as Citation,
                     updatedModalData.contributors,
                     updatedModalData.attachmentData.map(a => a.path).filter((p): p is string => p !== undefined),
                     updatedModalData.relatedNotePaths
@@ -497,17 +496,17 @@ export class EditBibliographyModal extends BibliographyModal {
             
         } catch (error) {
             console.error('Error updating literature note:', error);
-            new Notice(`Failed to update note: ${error.message}`);
+            new Notice(`Failed to update note: ${errorMessage(error)}`);
         }
     }
     
     /**
      * Generate filename from frontmatter data
      */
-    private async generateFileName(frontmatter: any): Promise<string> {
+    private async generateFileName(frontmatter: UnknownRecord): Promise<string> {
         const templateVariableBuilder = new TemplateVariableBuilderService();
         const templateVariables = templateVariableBuilder.buildVariables(
-            frontmatter,
+            frontmatter as Citation,
             this.contributors,
             this.attachmentData.map(a => a.path).filter((p): p is string => p !== undefined),
             this.relatedNotePaths

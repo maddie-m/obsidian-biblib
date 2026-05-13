@@ -304,6 +304,10 @@
   padding: 16px;
 }
 
+.bibliography-autofill-content.is-collapsed {
+  display: none;
+}
+
 .bibliography-autofill-content .setting-item:last-child {
   padding-bottom: 0;
 }
@@ -666,6 +670,16 @@
 }
 
 .custom-field-warning.warning-visible {
+  display: block;
+}
+
+.modal-field-warning.warning-hidden,
+.edit-body-warning.warning-hidden {
+  display: none;
+}
+
+.modal-field-warning.warning-visible,
+.edit-body-warning.warning-visible {
   display: block;
 }
 

@@ -2,6 +2,7 @@ import { App, Notice, TFile, normalizePath } from 'obsidian';
 import { BibliographyPluginSettings } from '../types';
 import { AttachmentType } from '../types/citation';
 import { ParsedReference } from './reference-parser-service';
+import { asRecordArray, errorMessage, getString } from '../utils/type-guards';
 
 /**
  * Input data for attachment import operations
@@ -51,26 +52,27 @@ export class AttachmentManagerService {
         // Check common file-related fields in CSL data
         if (cslObj.file) {
           if (Array.isArray(cslObj.file)) {
-            filePaths.push(...cslObj.file.filter((f: any) => typeof f === 'string'));
+            filePaths.push(...cslObj.file.filter((f: unknown) => typeof f === 'string'));
           } else if (typeof cslObj.file === 'string') {
             filePaths.push(cslObj.file);
           }
         }
         
-        // Check for link field which might contain file URLs
-        if (cslObj.link && Array.isArray(cslObj.link)) {
-          for (const link of cslObj.link) {
-            if (link.url && typeof link.url === 'string' && !link.url.startsWith('http')) {
-              filePaths.push(link.url);
-            }
-          }
-        }
+	        // Check for link field which might contain file URLs
+	        if (cslObj.link && Array.isArray(cslObj.link)) {
+	          for (const link of asRecordArray(cslObj.link)) {
+	            const linkUrl = getString(link, 'url');
+	            if (linkUrl && !linkUrl.startsWith('http')) {
+	              filePaths.push(linkUrl);
+	            }
+	          }
+	        }
         
         // Other possible fields where files might be referenced
         for (const field of ['pdf', 'attachment']) {
           if (cslObj[field]) {
             if (Array.isArray(cslObj[field])) {
-              filePaths.push(...cslObj[field].filter((f: any) => typeof f === 'string'));
+              filePaths.push(...cslObj[field].filter((f: unknown) => typeof f === 'string'));
             } else if (typeof cslObj[field] === 'string') {
               filePaths.push(cslObj[field]);
             }
@@ -112,7 +114,7 @@ export class AttachmentManagerService {
       const potentialIDs = new Set<string>();
       for (const path of cleanedPaths) {
         // Extract ID from patterns like "files/12345/filename.pdf" or "attachments/12345/filename.pdf"
-        const match = path.match(/(?:files|attachments)\/([^\/]+)\//);
+	        const match = path.match(/(?:files|attachments)\/([^/]+)\//);
         if (match && match[1]) {
           potentialIDs.add(match[1]);
         }
@@ -225,7 +227,7 @@ export class AttachmentManagerService {
       }
       
       // Sanitize citekey for use in filename
-      const sanitizedId = citekey.replace(/[^a-zA-Z0-9_\-]+/g, '_');
+	      const sanitizedId = citekey.replace(/[^a-zA-Z0-9_-]+/g, '_');
       
       // Find all files in the target folder with the same extension
       const filesInFolder = this.app.vault.getFiles().filter(file => 
@@ -360,7 +362,7 @@ export class AttachmentManagerService {
       }
       
       // Sanitize citekey for use in filename
-      const sanitizedId = citekey.replace(/[^a-zA-Z0-9_\-]+/g, '_');
+	      const sanitizedId = citekey.replace(/[^a-zA-Z0-9_-]+/g, '_');
       
       // Find all files in the target folder with the same extension
       const filesInFolder = this.app.vault.getFiles().filter(file => 
@@ -417,7 +419,7 @@ export class AttachmentManagerService {
       return targetPath;
     } catch (error) {
       console.error(`Error moving attachment to proper location: ${error}`);
-      new Notice(`Error organizing attachment: ${error instanceof Error ? error.message : String(error)}`);
+	      new Notice(`Error organizing attachment: ${errorMessage(error)}`);
       return null;
     }
   }
@@ -431,7 +433,7 @@ export class AttachmentManagerService {
     try {
       const file = this.app.vault.getAbstractFileByPath(filePath);
       if (file instanceof TFile) {
-        await this.app.vault.trash(file, false);
+	        await this.app.fileManager.trashFile(file);
         return true;
       }
       return false;

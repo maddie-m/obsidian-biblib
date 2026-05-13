@@ -1,6 +1,6 @@
 import esbuild from "esbuild";
 import process from "process";
-import builtins from "builtin-modules";
+import { builtinModules } from "module";
 
 const banner =
 `/*
@@ -33,7 +33,7 @@ const context = await esbuild.context({
         "@lezer/lr",
         // Removed @citation-js/date from external so it gets bundled
         // Externalize all Node builtins except 'buffer' so Citation.js can bundle its buffer dependency
-        ...builtins.filter(mod => mod !== 'buffer')
+        ...builtinModules.filter(mod => mod !== 'buffer')
     ],
     format: "cjs",
 	target: "es2018",
