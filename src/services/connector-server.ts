@@ -1,12 +1,4 @@
 import { App, Notice } from 'obsidian';
-import * as http from 'http';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as stream from 'stream';
-import * as url from 'url';
-import * as crypto from 'crypto';
-import * as os from 'os';
-import { promisify } from 'util';
 import { BibliographyPluginSettings } from '../types/settings';
 import { SessionItem, ZoteroAttachment } from '../types/citation';
 import { errorMessage, getString, isRecord, UnknownRecord } from '../utils/type-guards';
@@ -17,8 +9,6 @@ import {
     ERROR_MESSAGES,
     SUCCESS_MESSAGES
 } from '../constants';
-
-const pipeline = promisify(stream.pipeline);
 
 // --- Constants ---
 const CONNECTOR_SERVER_VERSION = '1.0.7';
@@ -58,14 +48,40 @@ interface StoredAttachment extends ZoteroAttachment {
     charset?: string;
 }
 
+interface NodeError extends Error {
+    code?: string;
+}
+
+interface NodeRuntime {
+    http: typeof import('http');
+    fs: typeof import('fs');
+    path: typeof import('path');
+    url: typeof import('url');
+    crypto: typeof import('crypto');
+    os: typeof import('os');
+    pipeline: (source: unknown, destination: unknown) => Promise<void>;
+}
+
+type IncomingMessage = import('http').IncomingMessage;
+type ServerResponse = import('http').ServerResponse;
+
+function requireNodeModule<T>(moduleName: string): T {
+    const requireFn = (window as unknown as { require?: (id: string) => unknown }).require;
+    if (!requireFn) {
+        throw new Error('Node.js require is unavailable in this Obsidian runtime.');
+    }
+    return requireFn(moduleName) as T;
+}
+
 /**
  * A server that intercepts Zotero Connector requests to integrate with Obsidian.
  */
 export class ConnectorServer {
-    private server: http.Server | null = null;
+    private server: ReturnType<NodeRuntime['http']['createServer']> | null = null;
     private app: App;
     private settings: BibliographyPluginSettings;
-    private tempDir: string;
+    private tempDir: string = '';
+    private runtime: NodeRuntime | null = null;
     private sessions: Map<string, SessionData> = new Map();
     private processedSnapshots: Set<string> = new Set(); // Track processed HTML snapshots by session ID
     private processedAttachmentPaths: Map<string, string> = new Map(); // Track attachment paths by session+filename
@@ -74,8 +90,45 @@ export class ConnectorServer {
     constructor(app: App, settings: BibliographyPluginSettings) {
         this.app = app;
         this.settings = settings;
-        this.tempDir = settings.tempPdfPath || path.join(os.tmpdir(), 'obsidian-bibliography');
+    }
 
+    private async ensureNodeRuntime(): Promise<NodeRuntime> {
+        if (this.runtime) {
+            return this.runtime;
+        }
+
+        const http = requireNodeModule<typeof import('http')>('http');
+        const fs = requireNodeModule<typeof import('fs')>('fs');
+        const path = requireNodeModule<typeof import('path')>('path');
+        const stream = requireNodeModule<typeof import('stream')>('stream');
+        const url = requireNodeModule<typeof import('url')>('url');
+        const crypto = requireNodeModule<typeof import('crypto')>('crypto');
+        const os = requireNodeModule<typeof import('os')>('os');
+        const util = requireNodeModule<typeof import('util')>('util');
+
+        this.runtime = {
+            http,
+            fs,
+            path,
+            url,
+            crypto,
+            os,
+            pipeline: util.promisify(stream.pipeline),
+        };
+
+        return this.runtime;
+    }
+
+    private get node(): NodeRuntime {
+        if (!this.runtime) {
+            throw new Error('Connector server runtime has not been initialized.');
+        }
+        return this.runtime;
+    }
+
+    private async ensureTempDir(): Promise<void> {
+        const { fs, path, os } = await this.ensureNodeRuntime();
+        this.tempDir = this.settings.tempPdfPath || path.join(os.tmpdir(), 'obsidian-bibliography');
         if (!fs.existsSync(this.tempDir)) {
             try {
                 fs.mkdirSync(this.tempDir, { recursive: true });
@@ -91,6 +144,8 @@ export class ConnectorServer {
             return;
         }
 
+        await this.ensureTempDir();
+        const { http } = this.node;
         const port = this.settings.zoteroConnectorPort || DEFAULT_ZOTERO_PORT;
 
         this.server = http.createServer((req, res) => {
@@ -104,7 +159,7 @@ export class ConnectorServer {
                 resolve();
             });
 
-            this.server?.on('error', (err: NodeJS.ErrnoException) => {
+            this.server?.on('error', (err: NodeError) => {
                 console.error('Failed to start Zotero Connector server:', err);
                 let message = `Failed to start Zotero Connector server: ${err.message}`;
                 if (err.code === 'EADDRINUSE') {
@@ -138,7 +193,7 @@ export class ConnectorServer {
         });
     }
 
-    private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
         res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Zotero-Version, X-Zotero-Connector-API-Version, X-Metadata, Authorization');
@@ -150,7 +205,7 @@ export class ConnectorServer {
             return;
         }
 
-        const parsedUrl = url.parse(req.url || '', true);
+        const parsedUrl = this.node.url.parse(req.url || '', true);
         const pathname = parsedUrl.pathname || '';
         const method = req.method || 'GET';
 
@@ -173,7 +228,7 @@ export class ConnectorServer {
         }
     }
 
-    private async routeConnectorApi(endpoint: string, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    private async routeConnectorApi(endpoint: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
         const method = req.method || 'GET';
 
 
@@ -238,7 +293,7 @@ export class ConnectorServer {
 
     // --- Endpoint Handlers ---
 
-    private async handlePing(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    private async handlePing(req: IncomingMessage, res: ServerResponse): Promise<void> {
         const clientApiVersion = parseInt(req.headers['x-zotero-connector-api-version']?.toString() || '0', 10);
 
 
@@ -271,13 +326,13 @@ export class ConnectorServer {
         });
     }
 
-    private async handleSaveItems(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    private async handleSaveItems(req: IncomingMessage, res: ServerResponse): Promise<void> {
         const body = await this.readRequestBody(req);
         let data: unknown;
         try { data = JSON.parse(body) as unknown; } catch { this.sendResponse(res, 400, { error: 'Invalid JSON data' }); return; }
         if (!isRecord(data) || !Array.isArray(data.items) || data.items.length === 0) { this.sendResponse(res, 400, { error: 'No items provided' }); return; }
 
-        const sessionID = getString(data, 'sessionID') || crypto.randomUUID();
+        const sessionID = getString(data, 'sessionID') || this.node.crypto.randomUUID();
         const uri = getString(data, 'uri') || 'Unknown URI';
         const primaryItem = data.items[0] as SessionItem;
 
@@ -306,13 +361,13 @@ export class ConnectorServer {
         new Notice('Receiving item from Zotero.');
     }
 
-    private async handleSaveSnapshot(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    private async handleSaveSnapshot(req: IncomingMessage, res: ServerResponse): Promise<void> {
         const body = await this.readRequestBody(req);
         let data: unknown;
         try { data = JSON.parse(body) as unknown; } catch { this.sendResponse(res, 400, { error: 'Invalid JSON data' }); return; }
         if (!isRecord(data)) { this.sendResponse(res, 400, { error: 'Invalid JSON data' }); return; }
 
-        const sessionID = getString(data, 'sessionID') || crypto.randomUUID();
+        const sessionID = getString(data, 'sessionID') || this.node.crypto.randomUUID();
         const uri = getString(data, 'url') || 'Unknown URI';
         const title = getString(data, 'title') || 'Web page snapshot';
         
@@ -339,11 +394,11 @@ export class ConnectorServer {
             tags: [],
             // Add creators array if available in the data or from URL metadata
             creators: creators as SessionItem['creators'],
-            id: getString(data, 'id') || `webpage-${crypto.createHash('sha1').update(uri).digest('hex').substring(0, 10)}`
+            id: getString(data, 'id') || `webpage-${this.node.crypto.createHash('sha1').update(uri).digest('hex').substring(0, 10)}`
         };
 
         // Create a temporary ID for the expected HTML snapshot
-        const tempSnapshotId = `html-snapshot-${crypto.randomUUID().substring(0, 8)}`;
+        const tempSnapshotId = `html-snapshot-${this.node.crypto.randomUUID().substring(0, 8)}`;
         const expectedAttachmentIds = new Set<string>([tempSnapshotId]);
 
         this.sessions.set(sessionID, {
@@ -364,8 +419,8 @@ export class ConnectorServer {
         new Notice(`Receiving snapshot for ${title}.`);
     }
 
-    private async handleSaveAttachment(req: http.IncomingMessage, res: http.ServerResponse, isStandalone: boolean): Promise<void> {
-        const parsedUrl = url.parse(req.url || '', true);
+    private async handleSaveAttachment(req: IncomingMessage, res: ServerResponse, isStandalone: boolean): Promise<void> {
+        const parsedUrl = this.node.url.parse(req.url || '', true);
         const sessionID = parsedUrl.query.sessionID as string;
 
         if (!sessionID) { this.sendResponse(res, 400, { error: 'sessionID query parameter is required' }); return; }
@@ -391,13 +446,13 @@ export class ConnectorServer {
             title: getString(metadataPayload, 'title'),
         };
         
-        const attachmentId = metadata.id || crypto.randomUUID();
+        const attachmentId = metadata.id || this.node.crypto.randomUUID();
         const title = metadata.title || 'Attachment';
         const sourceUrlForFilename = metadata.url || session.uri;
         
         // Generate filename and path
         const filename = this.generateFilename(title, contentType, sourceUrlForFilename);
-        const filePath = path.join(this.tempDir, filename);
+        const filePath = this.node.path.join(this.tempDir, filename);
         
         // IMPROVED: Multiple checks for duplicate attachments
         
@@ -408,7 +463,7 @@ export class ConnectorServer {
             res.writeHead(201, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ 
                 status: 'success', 
-                filename: path.basename(session.attachmentStatus[attachmentId].localPath),
+                filename: this.node.path.basename(session.attachmentStatus[attachmentId].localPath),
                 canRecognize: contentType === 'application/pdf' && isStandalone 
             }));
             return;
@@ -476,7 +531,7 @@ export class ConnectorServer {
         session.attachmentStatus[attachmentId] = { progress: 0 };
 
         try {
-            await pipeline(req, fs.createWriteStream(filePath));
+            await this.node.pipeline(req, this.node.fs.createWriteStream(filePath));
             
             // Mark this attachment path as processed
             session.processedAttachmentPaths.add(filePath);
@@ -528,13 +583,13 @@ export class ConnectorServer {
             session.attachmentStatus[attachmentId].progress = -1;
             session.attachmentStatus[attachmentId].error = errorMessage(error);
             this.sessions.set(sessionID, session);
-            fs.unlink(filePath, () => undefined);
+            this.node.fs.unlink(filePath, () => undefined);
             this.sendResponse(res, 500, { error: 'Failed to save attachment' });
             this.checkAndDispatchIfComplete(sessionID);
         }
     }
 
-    private async handleSaveSingleFile(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    private async handleSaveSingleFile(req: IncomingMessage, res: ServerResponse): Promise<void> {
         const body = await this.readRequestBody(req);
         let data: unknown;
         try { data = JSON.parse(body) as unknown; } catch { this.sendResponse(res, 400, { error: 'Invalid JSON data' }); return; }
@@ -573,12 +628,12 @@ export class ConnectorServer {
         }
         
         // Determine a stable ID for the snapshot
-        const snapshotIdBase = crypto.createHash('md5').update(requestUrl).digest('hex').substring(0, 10);
+        const snapshotIdBase = this.node.crypto.createHash('md5').update(requestUrl).digest('hex').substring(0, 10);
         const attachmentId = getString(data, 'id') || `html-${snapshotIdBase}`;
         
         // Generate filename and path
         const filename = this.generateFilename(title, 'text/html', requestUrl);
-        const filePath = path.join(this.tempDir, filename);
+        const filePath = this.node.path.join(this.tempDir, filename);
 
         
         // Find any temporary placeholder ID
@@ -603,7 +658,7 @@ export class ConnectorServer {
         session.attachmentStatus[attachmentId] = { progress: 0 };
         
         try {
-            await fs.promises.writeFile(filePath, snapshotContent, 'utf-8');
+            await this.node.fs.promises.writeFile(filePath, snapshotContent, 'utf-8');
             
             // Mark this snapshot as processed
             session.processedSnapshots.add(attachmentId);
@@ -649,13 +704,13 @@ export class ConnectorServer {
             session.attachmentStatus[attachmentId].progress = -1;
             session.attachmentStatus[attachmentId].error = errorMessage(error);
             this.sessions.set(sessionID, session);
-            fs.unlink(filePath, () => undefined);
+            this.node.fs.unlink(filePath, () => undefined);
             this.sendResponse(res, 500, { error: 'Failed to save snapshot' });
             this.checkAndDispatchIfComplete(sessionID);
         }
     }
 
-    private handleGetSelectedCollection(req: http.IncomingMessage, res: http.ServerResponse): void {
+    private handleGetSelectedCollection(req: IncomingMessage, res: ServerResponse): void {
         this.sendResponse(res, 200, {
             id: "obsidian",
             name: "Obsidian Vault",
@@ -668,7 +723,7 @@ export class ConnectorServer {
         });
     }
 
-    private async handleSessionProgress(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    private async handleSessionProgress(req: IncomingMessage, res: ServerResponse): Promise<void> {
         const body = await this.readRequestBody(req);
         let data: unknown;
         try { data = JSON.parse(body) as unknown; } catch { this.sendResponse(res, 400, { error: 'Invalid JSON data' }); return; }
@@ -716,17 +771,17 @@ export class ConnectorServer {
         }
     }
 
-    private handleHasAttachmentResolvers(req: http.IncomingMessage, res: http.ServerResponse): void {
+    private handleHasAttachmentResolvers(req: IncomingMessage, res: ServerResponse): void {
         this.sendResponse(res, 200, false);
     }
 
-    private handleSaveAttachmentFromResolver(req: http.IncomingMessage, res: http.ServerResponse): void {
+    private handleSaveAttachmentFromResolver(req: IncomingMessage, res: ServerResponse): void {
         this.sendResponse(res, 501, { error: 'Attachment resolving not implemented' });
     }
 
     // --- Utility Methods ---
 
-    private sendResponse(res: http.ServerResponse, statusCode: number, body: unknown): void {
+    private sendResponse(res: ServerResponse, statusCode: number, body: unknown): void {
         if (res.headersSent) {
             return;
         }
@@ -735,22 +790,29 @@ export class ConnectorServer {
         res.end(JSON.stringify(body));
     }
 
-    private sendMethodNotAllowed(res: http.ServerResponse, _endpoint: string): void {
+    private sendMethodNotAllowed(res: ServerResponse, _endpoint: string): void {
         this.sendResponse(res, 405, { error: 'Method Not Allowed' });
     }
 
-    private handleNotImplemented(res: http.ServerResponse, reason: string = 'Not implemented'): void {
+    private handleNotImplemented(res: ServerResponse, reason: string = 'Not implemented'): void {
         this.sendResponse(res, 501, { error: 'Not Implemented', reason: reason });
     }
 
-    private async readRequestBody(req: http.IncomingMessage): Promise<string> {
-        const chunks: Buffer[] = [];
+    private async readRequestBody(req: IncomingMessage): Promise<string> {
+        const chunks: Uint8Array[] = [];
         for await (const chunk of req) {
             if (typeof chunk === 'string' || chunk instanceof Uint8Array) {
-                chunks.push(Buffer.from(chunk));
+                chunks.push(typeof chunk === 'string' ? new TextEncoder().encode(chunk) : chunk);
             }
         }
-        return Buffer.concat(chunks).toString('utf-8');
+        const totalLength = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+        const body = new Uint8Array(totalLength);
+        let offset = 0;
+        for (const chunk of chunks) {
+            body.set(chunk, offset);
+            offset += chunk.byteLength;
+        }
+        return new TextDecoder('utf-8').decode(body);
     }
 
     private generateFilename(title: string, mimeType: string, sourceUrl?: string): string {
@@ -769,8 +831,8 @@ export class ConnectorServer {
         if (!baseName || baseName === '_' || title === 'Attachment' || title === 'Snapshot' || title === 'Untitled') {
             // Create a deterministic hash from the source URL or title to help with duplicate detection
             // This ensures the same source always gets the same filename, helping deduplication
-            const sourceData = sourceUrl || title || crypto.randomUUID();
-            const hash = crypto.createHash('sha1').update(sourceData).digest('hex').substring(0, 10);
+            const sourceData = sourceUrl || title || this.node.crypto.randomUUID();
+            const hash = this.node.crypto.createHash('sha1').update(sourceData).digest('hex').substring(0, 10);
             baseName = `attachment_${hash}`;
         }
         return `${baseName}.${extension}`;

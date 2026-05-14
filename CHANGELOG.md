@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 See [unreleased.md](docs/releases/unreleased.md) for upcoming changes.
 
+## [1.8.2] - 2026-05-14
+
+### Fixed
+
+- Restored mobile availability by marking the plugin as not desktop-only. Desktop-only Zotero connector functionality remains gated on mobile.
+
 ## [1.8.1] - 2026-05-13
 
 ### Changed
@@ -109,7 +115,8 @@ See [unreleased.md](docs/releases/unreleased.md) for upcoming changes.
 
 - Template preview component (replaced by template playground)
 
-[Unreleased]: https://github.com/callumalpass/obsidian-biblib/compare/1.8.1...HEAD
+[Unreleased]: https://github.com/callumalpass/obsidian-biblib/compare/1.8.2...HEAD
+[1.8.2]: https://github.com/callumalpass/obsidian-biblib/compare/1.8.1...1.8.2
 [1.8.1]: https://github.com/callumalpass/obsidian-biblib/compare/1.8.0...1.8.1
 [1.7.2]: https://github.com/callumalpass/obsidian-biblib/compare/1.7.1...1.7.2
 [1.7.1]: https://github.com/callumalpass/obsidian-biblib/compare/1.7.0...1.7.1

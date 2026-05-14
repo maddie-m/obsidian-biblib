@@ -1,5 +1,4 @@
 import { App, Notice, Platform, Plugin, debounce } from 'obsidian';
-import * as fs from 'fs';
 import { BibliographyModal } from '../ui/modals/bibliography-modal';
 import { BibliographyPluginSettings } from '../types/settings';
 import { AttachmentData, AttachmentType, Citation, ZoteroItem } from '../types/citation';
@@ -13,6 +12,14 @@ type ConnectorServerConstructor = new (
     app: App,
     settings: BibliographyPluginSettings
 ) => ConnectorServerType;
+
+function requireNodeModule<T>(moduleName: string): T {
+    const requireFn = (window as unknown as { require?: (id: string) => unknown }).require;
+    if (!requireFn) {
+        throw new Error('Node.js require is unavailable in this Obsidian runtime.');
+    }
+    return requireFn(moduleName) as T;
+}
 
 /**
  * Manages the Zotero Connector functionality including server management,
@@ -246,7 +253,7 @@ export class ZoteroConnectorManager {
             // If we're already processing this exact item (by ID), just add the new attachments
             if (this.activeZoteroItemId === itemId && this.activeZoteroModal) {
                 // Just process new attachments for the existing modal
-                this.processZoteroAttachments(files, this.activeZoteroModal);
+                void this.processZoteroAttachments(files, this.activeZoteroModal);
                 return;
             }
             // If it's a different item or no modal, must wait
@@ -322,7 +329,7 @@ export class ZoteroConnectorManager {
                     modal.populateFormFromCitoid(cslData);
                     
                     // Then process any attachments we have now
-                    this.processZoteroAttachments(files, modal);
+                    void this.processZoteroAttachments(files, modal);
                     
                     new Notice('Zotero data loaded');
                 } catch (modalError) {
@@ -397,6 +404,7 @@ export class ZoteroConnectorManager {
                 }
                 // If 'files' contains paths (requires Node 'fs' on desktop):
                 else if (typeof filePath === 'string' && !Platform.isMobile) {
+                    const fs = requireNodeModule<typeof import('fs')>('fs');
                     if (fs.existsSync(filePath)) {
                         const fileName = filePath.split(/[/\\]/).pop() || 'document.pdf';
                         
@@ -457,7 +465,7 @@ export class ZoteroConnectorManager {
         // Check if we have an active modal for this item
         if (this.activeZoteroItemId === itemId && this.activeZoteroModal) {
             // Process the new attachments and add them to the existing modal
-            this.processZoteroAttachments(files, this.activeZoteroModal);
+            void this.processZoteroAttachments(files, this.activeZoteroModal);
         }
     }
     
