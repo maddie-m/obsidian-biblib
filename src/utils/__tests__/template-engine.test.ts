@@ -418,6 +418,34 @@ describe('TemplateEngine', () => {
       });
       expect(result).toBe('smith');
     });
+
+    it('should chain titleword with capitalize', () => {
+      const result = TemplateEngine.render('{{title|titleword|capitalize}}', {
+        title: 'An article name'
+      });
+      expect(result).toBe('Article');
+    });
+
+    it('should chain titleword with uppercase', () => {
+      const result = TemplateEngine.render('{{title|titleword|uppercase}}', {
+        title: 'The Art of Computer Programming'
+      });
+      expect(result).toBe('ART');
+    });
+
+    it('should chain titleword with capitalize and truncate', () => {
+      const result = TemplateEngine.render('{{title|titleword|capitalize|truncate:5}}', {
+        title: 'Computer Programming'
+      });
+      expect(result).toBe('Compu');
+    });
+
+    it('should chain multiple formatters in sequence', () => {
+      const result = TemplateEngine.render('{{text|lowercase|capitalize}}', {
+        text: 'HELLO WORLD'
+      });
+      expect(result).toBe('Hello World');
+    });
   });
 
   describe('render - array iteration edge cases', () => {

@@ -398,6 +398,24 @@ export class TemplateEngine {
         return current;
     }
     
+	/** 
+	* Separate and apply multiple formatters  which can be separated by pipes
+	*/
+    private static formatValue(value: unknown, format: string): string {
+        // separate values like "titleword|upper|truncate:10"
+        const formatChain = format.split('|');
+        let result = value;
+        
+        for (const formatter of formatChain) {
+			const trimmed = formatter.trimStart();
+			if (trimmed) {
+				result = this.applySingleFormatter(result, trimmed);
+			}
+        }
+        
+        return String(result);
+    }
+    
     /**
      * Apply a formatter to a value.
      *
@@ -450,20 +468,20 @@ export class TemplateEngine {
      *
      * @example
      * ```typescript
-     * formatValue('HELLO', 'lower');
+     * applySingleFormatter('HELLO', 'lower');
      * // => "hello"
      *
-     * formatValue('A Long Title Here', 'truncate:10');
+     * applySingleFormatter('A Long Title Here', 'truncate:10');
      * // => "A Long Tit"
      *
-     * formatValue('Smith', 'abbr3');
+     * applySingleFormatter('Smith', 'abbr3');
      * // => "Smi"
      *
-     * formatValue(['a', 'b', 'c'], 'join: and ');
+     * applySingleFormatter(['a', 'b', 'c'], 'join: and ');
      * // => "a and b and c"
      * ```
      */
-    private static formatValue(value: unknown, format: string): string {
+    private static applySingleFormatter(value: unknown, format: string): string {
         // Check for formatters with parameters (e.g. truncate:30)
         const formatParts = format.split(':');
         const formatName = formatParts[0];
