@@ -86,6 +86,7 @@ export interface BibliographyPluginSettings {
         literatureNotePath: string;
         filenameTemplate: string; // Filename template option
         createAttachmentSubfolder: boolean;
+        useUnifiedFolderStructure: boolean; // Place notes in same subfolder as attachments
         // Bibliography and file options
         bibliographyJsonPath: string;
         citekeyListPath: string;
@@ -125,6 +126,7 @@ export const DEFAULT_SETTINGS: BibliographyPluginSettings = {
         literatureNotePath: '/',
         filenameTemplate: '@{{citekey}}',
         createAttachmentSubfolder: true,
+        useUnifiedFolderStructure: false,
         bibliographyJsonPath: 'biblib/bibliography.json',
         citekeyListPath: 'citekeylist.md',
         bibtexFilePath: 'biblib/bibliography.bib',

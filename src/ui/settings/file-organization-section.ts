@@ -39,8 +39,18 @@ export function renderFilePathSettings(
             }));
 
     new Setting(containerEl)
+        .setName('Use unified folder structure')
+        .setDesc('When enabled with attachment subfolders, place literature notes in the same subfolder as attachments (e.g., biblib/citation-key/@filename-template.md)')
+        .addToggle(toggle => toggle
+            .setValue(plugin.settings.useUnifiedFolderStructure)
+            .onChange(async (value) => {
+                plugin.settings.useUnifiedFolderStructure = value;
+                await plugin.saveSettings();
+            }));
+
+    new Setting(containerEl)
         .setName('Literature note location')
-        .setDesc('The folder where literature notes will be stored. Use forward slashes for subfolders. Use "/" for vault.')
+        .setDesc('The folder where literature notes will be stored. Use forward slashes for subfolders. Use "/" for vault. Ignored if "Use unified folder structure" is enabled.')
         .addText(text => text
             .setPlaceholder('/')
             .setValue(plugin.settings.literatureNotePath)

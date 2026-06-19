@@ -727,12 +727,24 @@ export class NoteCreationService {
     }
     
     // We need the path to be absolute, so prepend the base path
-    let basePath = normalizePath(this.settings.literatureNotePath);
-    if (basePath !== '/' && !basePath.endsWith('/')) {
-      basePath += '/';
+    let basePath: string;
+    
+    // when using unified folder structure and attachment subfolders are enabled,
+    // put the note in the same subfolder as attachments
+    if (this.settings.useUnifiedFolderStructure && this.settings.createAttachmentSubfolder) {
+      const attachmentBase = normalizePath(this.settings.attachmentFolderPath);
+      basePath = normalizePath(`${attachmentBase}/${id}`);
+      if (!basePath.endsWith('/')) {
+        basePath += '/';
+      }
+    } else {
+      basePath = normalizePath(this.settings.literatureNotePath);
+      if (basePath !== '/' && !basePath.endsWith('/')) {
+        basePath += '/';
+      }
+      // Handle root path case
+      if (basePath === '/') basePath = '';
     }
-    // Handle root path case
-    if (basePath === '/') basePath = '';
     
     finalPath = normalizePath(`${basePath}${fileName}`);
     
